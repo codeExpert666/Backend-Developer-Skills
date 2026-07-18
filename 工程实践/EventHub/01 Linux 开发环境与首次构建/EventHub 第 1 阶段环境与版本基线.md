@@ -40,16 +40,16 @@ Mac mini 连接内部虚拟机仍是真实的 SSH 客户端—服务端流程，
 
 ## 宿主机事实与资源决策
 
-| 项目 | 2026-07-16 只读事实或候选值 | 决策含义 | 重新核对 |
-| --- | --- | --- | --- |
-| CPU | Apple M4，ARM64 | Ubuntu 客户机采用 ARM64，优先虚拟化而非 AMD64 模拟 | `uname -m`、`system_profiler` |
-| 内存 | 24GB | 候选分配 12GB，仍为 macOS、IDE 和浏览器保留余量 | `system_profiler`、Activity Monitor |
-| 根卷可用空间 | 约 347GiB | 候选稀疏磁盘上限 180GB，但创建前必须重查 | `df -h /` |
-| UTM | 当时未安装 | 第 1 阶段必须实际安装和创建后才能验收 | 检查 `/Applications/UTM.app` |
-| OrbStack | 已安装，版本 2.2.1 | 只用于说明边界，不代替完整 Ubuntu Server VM 主线 | `orb version` |
-| 候选 vCPU | 6 | 支撑并行 Go/Maven 构建和容器，同时避免占满宿主核心 | VM 内 `nproc` |
-| 候选内存 | 12GB | 支撑 JDK、Go、IDE 远程进程和少量容器 | VM 内 `free -h` |
-| 候选磁盘 | 180GB 稀疏上限 | 为源码、依赖缓存、镜像、卷和后续阶段留余量 | VM 内 `df -hT`，宿主机持续观察实际占用 |
+| 项目       | 2026-07-16 只读事实或候选值 | 决策含义                                | 重新核对                               |
+| -------- | ------------------- | ----------------------------------- | ---------------------------------- |
+| CPU      | Apple M4，ARM64      | Ubuntu 客户机采用 ARM64，优先虚拟化而非 AMD64 模拟 | `uname -m`、`system_profiler`       |
+| 内存       | 24GB                | 候选分配 12GB，仍为 macOS、IDE 和浏览器保留余量     | `system_profiler`、Activity Monitor |
+| 根卷可用空间   | 约 347GiB            | 候选稀疏磁盘上限 180GB，但创建前必须重查             | `df -h /`                          |
+| UTM      | 当时未安装               | 第 1 阶段必须实际安装和创建后才能验收                | 检查 `/Applications/UTM.app`         |
+| OrbStack | 已安装，版本 2.2.1        | 只用于说明边界，不代替完整 Ubuntu Server VM 主线   | `orb version`                      |
+| 候选 vCPU  | 6                   | 支撑并行 Go/Maven 构建和容器，同时避免占满宿主核心      | VM 内 `nproc`                       |
+| 候选内存     | 12GB                | 支撑 JDK、Go、IDE 远程进程和少量容器             | VM 内 `free -h`                     |
+| 候选磁盘     | 180GB 稀疏上限          | 为源码、依赖缓存、镜像、卷和后续阶段留余量               | VM 内 `df -hT`，宿主机持续观察实际占用          |
 
 **执行位置：macOS 宿主机（任意目录，只读）**
 
