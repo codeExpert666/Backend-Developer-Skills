@@ -10,7 +10,7 @@ tags:
   - Ubuntu
   - Linux/安装
 created: 2026-07-16T00:31:57
-updated: 2026-07-19T00:34:54
+updated: 2026-07-19T14:59:36
 ---
 
 本文是一篇可复用的 UTM 操作笔记：从选择虚拟化方式、校验 Ubuntu Server ISO 开始，完成虚拟机创建、系统安装、安装介质卸载和首次启动验证。它不规定唯一的 CPU、内存、磁盘、网络模式或 Ubuntu 版本；具体选择应先参考 [[虚拟机、客户机与 CPU 架构]]、[[UTM 虚拟机资源规划]] 和 [[虚拟机网络模式与可达性]]。
@@ -30,7 +30,7 @@ updated: 2026-07-19T00:34:54
 - 能区分引导式与自定义存储布局、LVM 与 LUKS，并核对根文件系统和 VG 空闲空间。
 - 安装结束后卸载 ISO，确认系统从虚拟磁盘启动。
 - 能区分 cloud-init 正常完成、被 Ubuntu 安装器按设计禁用和真正的初始化异常。
-- 在客户机内验证架构、系统版本、磁盘、网络、DNS 和时间状态。
+- 在客户机内验证架构、系统版本、磁盘、网络、DNS、时区与时间同步状态。
 - 遇到 EFI Shell、重复进入安装器、网络不可用等问题时，知道从哪一层排查。
 
 ## 1. 先确定使用 Virtualize 还是 Emulate
@@ -398,7 +398,7 @@ fi
 > [!warning] 普通开发虚拟机不要重新启用 cloud-init
 > 不要删除 `/etc/cloud/cloud-init.disabled`，也不要为了把状态变成 `done` 而执行 `cloud-init clean --machine-id`。这会让后续启动再次进入 cloud-init 初始化路径。只有在明确制作模板或黄金镜像，并已规划机器标识、SSH 主机密钥和实例数据重生流程时，才应单独评估此操作。
 
-### 7.2 验证系统、磁盘、网络与时间
+### 7.2 验证系统、磁盘、网络、时区与时间同步
 
 **执行位置：Ubuntu 虚拟机（UTM 控制台，任意目录）**
 
@@ -434,10 +434,12 @@ systemctl --failed --no-pager
 - 根文件系统挂载在虚拟磁盘上，容量符合规划。
 - 网卡有地址，并存在默认路由。
 - `getent hosts ubuntu.com` 能解析域名。
-- 时间同步状态合理。
+- `timedatectl` 能显示当前时区与时间同步状态。
 - `systemctl --failed` 没有未解释的失败单元。
 
-若 IP 地址或 DNS 异常，不要先假设“Ubuntu 安装坏了”。按 [[虚拟机网络模式与可达性]] 和 [[Linux 网络接口、IP 地址、路由与 DNS 基础]] 从 UTM 虚拟网卡、客户机接口、DHCP、默认路由和 DNS 逐层检查；时间异常则单独检查客户机时间同步状态。
+`timedatectl` 中的 `Time zone` 与 `System clock synchronized` 是两个不同维度。`Time zone: Etc/UTC` 只表示 `Local time` 当前按 UTC 显示，不代表系统时钟错误；`System clock synchronized: yes` 表示系统时钟已同步，`NTP service: active` 表示网络时间同步服务处于活动状态。`RTC in local TZ: no` 表示 RTC 保持 UTC，通常无需改为本地时间。
+
+若 IP 地址或 DNS 异常，不要先假设“Ubuntu 安装坏了”。按 [[虚拟机网络模式与可达性]] 和 [[Linux 网络接口、IP 地址、路由与 DNS 基础]] 从 UTM 虚拟网卡、客户机接口、DHCP、默认路由和 DNS 逐层检查。如果 `Time zone` 与该主机的用途不符，继续按 [[Ubuntu Server 初始化与基础安全#5. 设置时区并验证时间同步]] 设置；如果 `System clock synchronized` 为 `no` 或 `NTP service` 未激活，再检查客户机实际使用的时间同步服务、网络与日志。
 
 ## 8. 常见故障与恢复
 
