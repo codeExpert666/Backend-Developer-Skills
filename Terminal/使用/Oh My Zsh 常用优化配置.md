@@ -12,7 +12,7 @@ tags:
   - Oh-My-Zsh
   - 命令行效率
 created: 2026-07-14T00:04:29
-updated: 2026-07-14T00:04:29
+updated: 2026-07-19T16:29:30
 ---
 
 本文在已经完成 [[Ubuntu 从零安装 Oh My Zsh]] 或 [[macOS 从零配置 Oh My Zsh]] 的前提下，提供一套克制、可维护的日常配置。先完成零外部依赖的基础层，再按需启用自动建议、语法高亮和 fzf；不要一次复制多个主题、插件管理器和网络脚本。
@@ -188,7 +188,21 @@ if command -v fzf >/dev/null 2>&1 && fzf --zsh >/dev/null 2>&1; then
 fi
 ~~~
 
+如果以后使用 Atuin 搜索历史，不要再让 fzf 绑定 `Ctrl-R`。请用以下片段替换上一段 fzf 配置：加载 fzf 时把 `FZF_CTRL_R_COMMAND` 临时设为空，再初始化 Atuin，让 Atuin 独占该快捷键。这里同时保留 Zsh 原生上方向键行为，并关闭不属于历史管理范围的 Atuin AI 快捷键；完整的职责划分见 [[zoxide 与 fzf 导航和模糊查找]] 和 [[Atuin 命令历史管理]]。
+
+~~~zsh
+if command -v fzf >/dev/null 2>&1 && fzf --zsh >/dev/null 2>&1; then
+  FZF_CTRL_R_COMMAND= source <(fzf --zsh)
+fi
+
+if command -v atuin >/dev/null 2>&1; then
+  eval "$(atuin init zsh --disable-up-arrow --disable-ai)"
+fi
+~~~
+
 较旧的发行版包可能没有 `--zsh` 选项。遇到这种情况，不要从博客复制固定路径；先运行 `fzf --help`，再按该版本或包管理器提供的 Shell integration 文档设置。这样不会把 Ubuntu 与 macOS 的安装路径混在一起。
+
+若你希望从框架式配置改为 Ghostty、Antidote、Starship、Atuin、zoxide 与 fzf 分工明确的模块化方案，请从 [[现代终端环境搭建概览]] 开始，不要在现有 Oh My Zsh 会话中再叠加第二个插件管理器。
 
 ## 6. macOS 专属的可选内置插件
 

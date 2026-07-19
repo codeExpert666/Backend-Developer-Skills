@@ -11,12 +11,14 @@ tags:
   - Zsh
   - Oh-My-Zsh
 created: 2026-07-14T00:04:29
-updated: 2026-07-14T00:04:29
+updated: 2026-07-19T16:29:30
 ---
 
 本文是 Linux（以 Ubuntu 为例）和 macOS 默认终端安装 Oh My Zsh 的入口。目标不是堆叠主题和插件，而是先得到一套可验证、可维护、可回退的 Zsh 环境，再按需要完成效率优化。
 
 如果你正在使用 Ubuntu，请阅读 [[Ubuntu 从零安装 Oh My Zsh]]；如果你使用 Mac 自带的 Terminal，请阅读 [[macOS 从零配置 Oh My Zsh]]。两个平台完成基础安装后，再继续 [[Oh My Zsh 常用优化配置]]。
+
+如果你更重视跨机器复现、组件边界和按需升级，可从 [[现代终端环境搭建概览]] 进入 Ghostty、Zsh、Antidote、Starship、Atuin、zoxide 与 fzf 组成的模块化路线。两条路线都以 Zsh 为基础，不需要同时加载 Oh My Zsh 与 Antidote；已有 Oh My Zsh 配置可按 [[从 Oh My Zsh 迁移到 Antidote]] 渐进迁移。
 
 ## 先区分终端、Shell 与 Oh My Zsh
 
@@ -96,6 +98,8 @@ grep '^ZSH_THEME=' ~/.zshrc
 - 基础安装：[[Ubuntu 从零安装 Oh My Zsh]]、[[macOS 从零配置 Oh My Zsh]]
 - 日常效率配置：[[Oh My Zsh 常用优化配置]]
 - 更新、故障处理和卸载：[[Oh My Zsh 更新、备份与卸载]]
+- 模块化替代路线：[[现代终端环境搭建概览]]
+- 从当前配置迁移：[[从 Oh My Zsh 迁移到 Antidote]]
 
 ## 官方参考资料
 
