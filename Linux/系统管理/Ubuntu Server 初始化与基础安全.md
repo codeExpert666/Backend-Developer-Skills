@@ -11,15 +11,21 @@ tags:
   - Linux/安全
   - Ubuntu
 created: 2026-07-16T00:31:57
-updated: 2026-07-19T18:55:27
+updated: 2026-07-20T00:49:15
 ---
 
-本文给出一台新装 Ubuntu Server 的通用初始化顺序：先保留控制台恢复入口，再核对身份、主机名、时区、网络、DNS、时间和软件包，最后建立 OpenSSH、UFW 与服务基线。
+本文给出一台新装 Ubuntu Server 的通用初始化顺序：先保留控制台恢复入口，再核对身份、主机名、时区、网络、DNS、时间和软件包，最后核对或建立 OpenSSH 入口、UFW 与服务基线。
 
-这里的目标是得到一台可维护的学习或开发主机，不是直接套用生产服务器的加固清单。用户与权限详见 [[Linux 用户、用户组、sudo 与文件权限]]，服务和日志详见 [[systemd 服务与日志基础]]，网络字段与验证命令详见 [[Linux 网络接口、IP 地址、路由与 DNS 基础]]，远程登录详见 [[OpenSSH 连接、密钥与主机指纹]]。
+这里的目标是得到一台可维护的学习或开发主机，不是直接套用生产服务器的加固清单。命令行的通用阅读方法见 [[Linux 命令行学习路线与命令地图]]，用户与权限详见 [[Linux 用户、用户组、sudo 与文件权限]]，软件包管理详见 [[APT 软件包管理基础]]，服务和日志详见 [[systemd 服务与日志基础]]，网络字段与验证命令详见 [[Linux 网络接口、IP 地址、路由与 DNS 基础]]，远程登录详见 [[OpenSSH 连接、密钥与主机指纹]]。
 
 > [!info] 核对日期与适用范围
-> 本文于 **2026-07-17** 核对 Ubuntu Server 和 systemd 官方资料。不同 Ubuntu 版本、镜像预装组件和网络环境可能不同，执行时应以 `/etc/os-release`、本机手册和当前官方文档为准。
+> 本文于 **2026-07-19** 核对 Ubuntu Server 和 systemd 官方资料。不同 Ubuntu 版本、镜像预装组件和网络环境可能不同，执行时应以 `/etc/os-release`、本机手册和当前官方文档为准。
+
+## 本篇掌握目标
+
+- **必须熟练**：执行前分清只读检查与系统变更，理解 `sudo` 只提升其后单条命令的权限；能拆出变量、引用、管道、重定向、条件和退出状态，并根据输出验证结果。
+- **理解会查**：知道 `uname`、`id`、`hostnamectl`、`timedatectl`、`lsblk`、`df`、`ip`、`systemctl`、`journalctl`、`apt` 和 `ss` 分别回答什么问题，具体字段和低频参数可随时查手册。
+- **认识即可**：复杂 `grep`、`dpkg-query`、`systemctl show` 选项和发行版差异；用到时回到对应专题或当前系统手册核对。
 
 ## 完成标准
 
@@ -28,7 +34,7 @@ updated: 2026-07-19T18:55:27
 - 主机拥有预期地址和默认路由，DNS 与 HTTPS 访问正常。
 - APT 索引可更新，待升级项目已经过审查。
 - `systemctl --failed` 中没有未解释的失败单元。
-- OpenSSH 已按需启用，UFW 启用前已经保留控制台和可验证的 SSH 入口。
+- OpenSSH 已按需安装并核对激活路径，UFW 启用前已经保留控制台和可验证的 SSH 入口。
 - 已保存一份不含密码、令牌、私钥和完整环境变量的基线记录。
 
 ## 1. 先保留恢复入口
@@ -42,7 +48,7 @@ flowchart TD
     C --> D["设置主机名与时区"]
     D --> E["验证网络、DNS 与时间"]
     E --> F["更新软件包"]
-    F --> G["启用并验证 OpenSSH"]
+    F --> G["核对并建立 OpenSSH 入口"]
     G --> H["先放行 SSH，再启用 UFW"]
     H --> I["保留旧会话，另开新会话复测"]
 ```
@@ -56,30 +62,44 @@ flowchart TD
 
 ```bash
 printf '%s\n' '--- system ---'
+# 显示系统发行版、版本和标识信息。
 cat /etc/os-release
+# 显示内核、主机和硬件架构等完整系统信息。
 uname -a
+# 显示 Debian 软件包体系使用的主 CPU 架构。
 dpkg --print-architecture
 
 printf '%s\n' '--- identity ---'
+# 显示当前 Shell 所属的用户名。
 whoami
+# 显示当前用户的 UID、GID 及附属组编号。
 id
+# 显示当前用户所属的用户组名称。
 groups
 printf 'HOME=%s\n' "$HOME"
 
 printf '%s\n' '--- hostname and time ---'
+# 显示主机名及其静态、瞬态和美化名称等信息。
 hostnamectl
+# 显示本地时间、时区和时间同步状态。
 timedatectl status
 
 printf '%s\n' '--- storage ---'
+# 按指定列列出块设备、文件系统类型和挂载点。
 lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
+# 以易读单位显示已挂载文件系统的类型、容量和使用情况。
 df -hT
 
 printf '%s\n' '--- network ---'
+# 以精简格式显示各网络接口的状态和已配置地址。
 ip -brief address
+# 显示内核路由表，重点核对默认路由。
 ip route
+# 显示 systemd-resolved 的 DNS 配置和当前解析状态。
 resolvectl status
 
 printf '%s\n' '--- failed units ---'
+# 列出状态为失败的 systemd 单元，不使用分页器。
 systemctl --failed --no-pager
 ```
 
@@ -117,6 +137,7 @@ sudo id
 **执行位置：Ubuntu Server（控制台，任意目录）**
 
 ```bash
+(
 old_hostname="$(hostnamectl --static)"
 printf '当前主机名：%s\n' "$old_hostname"
 printf '请输入新的主机名；不修改则按 Ctrl-C：'
@@ -128,6 +149,7 @@ esac
 
 sudo hostnamectl set-hostname "$new_hostname"
 hostnamectl status
+)
 ```
 
 随后检查 `/etc/hosts`：
@@ -135,7 +157,9 @@ hostnamectl status
 **执行位置：Ubuntu Server（控制台，任意目录）**
 
 ```bash
+# `-n` 输出匹配行的行号；`-E` 启用扩展正则，以便匹配以本机回环地址开头的 hosts 条目。
 grep -nE '^(127\.0\.0\.1|127\.0\.1\.1|::1)[[:space:]]' /etc/hosts
+# 用当前静态主机名查询系统名称解析结果（如 `/etc/hosts`）；未解析到时由 `|| true` 忽略非零退出码。
 getent hosts "$(hostnamectl --static)" || true
 ```
 
@@ -144,8 +168,20 @@ Ubuntu 常用 `127.0.1.1` 映射本机主机名。如果该行仍是旧名称，
 **执行位置：Ubuntu Server（控制台，任意目录）**
 
 ```bash
-sudo cp -a /etc/hosts "/etc/hosts.before-hostname-$(date +%Y%m%d%H%M%S)"
-sudoedit /etc/hosts
+(
+if ! hosts_backup="$(sudo mktemp /etc/hosts.before-hostname.XXXXXX)"; then
+  printf '%s\n' '停止：无法创建 /etc/hosts 备份路径。' >&2
+  exit 1
+fi
+if sudo cp -a -- /etc/hosts "$hosts_backup"; then
+  printf 'hosts_backup=%s\n' "$hosts_backup"
+  sudoedit /etc/hosts
+else
+  sudo rm -f -- "$hosts_backup"
+  printf '%s\n' '停止：/etc/hosts 备份失败，未打开编辑器。' >&2
+  exit 1
+fi
+)
 ```
 
 不要用不受约束的全局替换修改 `/etc/hosts`。如修改后 `sudo` 提示无法解析本机名，可从控制台恢复刚创建的备份，或修正 `127.0.1.1` 对应项。
@@ -157,10 +193,12 @@ sudoedit /etc/hosts
 **执行位置：Ubuntu Server（控制台，任意目录）**
 
 ```bash
+(
 timedatectl list-timezones
 printf '请输入 timedatectl 列表中的时区：'
 IFS= read -r target_timezone
 
+# `-q` 静默仅用退出码判断，`-x` 要求整行完全匹配，`-F` 将输入按普通文本而非正则表达式处理。
 if ! timedatectl list-timezones | grep -qxF "$target_timezone"; then
   printf '停止：不是 timedatectl 列出的时区：%s\n' "$target_timezone" >&2
   exit 1
@@ -168,14 +206,19 @@ fi
 
 sudo timedatectl set-timezone "$target_timezone"
 timedatectl status
+)
 ```
+
+以上两个输入块使用圆括号创建子 Shell；格式校验中的 `exit` 只停止当前代码块，不会退出控制台或 SSH 登录 Shell。
 
 预期 `Time zone` 为所选值，`System clock synchronized` 最终为 `yes`。查看同步服务与日志：
 
 **执行位置：Ubuntu Server（控制台，任意目录）**
 
 ```bash
+# 查看 systemd-timesyncd 服务的当前状态；`--no-pager` 直接输出，不进入交互式分页器。
 systemctl status systemd-timesyncd.service --no-pager
+# 查看该服务自本次启动（`-b`）以来的最近 80 条日志；`-u` 按服务筛选，`--no-pager` 禁用分页。
 journalctl -u systemd-timesyncd.service -b --no-pager -n 80
 ```
 
@@ -188,10 +231,15 @@ journalctl -u systemd-timesyncd.service -b --no-pager -n 80
 **执行位置：Ubuntu Server（控制台，任意目录）**
 
 ```bash
+# 以精简格式查看各网络接口的状态、MAC 地址和已配置的 IP 地址。
 ip -brief address
+# 查看内核路由表，重点确认是否存在指向网关的默认路由。
 ip route
+# 查看 systemd-resolved 的全局及各接口 DNS 配置与当前解析状态。
 resolvectl status
+# 通过 NSS 的 `ahosts` 查询域名可用于连接的地址；不同于上文的 `hosts`（查询 hosts 数据库条目以核对本机主机名映射），`ahosts` 基于 `getaddrinfo()` 返回地址，同一 IP 可能因套接字类型重复显示。
 getent ahosts archive.ubuntu.com
+# `-I` 仅请求 HTTP 响应头以验证 HTTPS 连通性；`--max-time 15` 将 DNS、连接和传输在内的总耗时限制为 15 秒。
 curl -I --max-time 15 https://archive.ubuntu.com/
 ```
 
@@ -207,6 +255,8 @@ curl -I --max-time 15 https://archive.ubuntu.com/
 Ubuntu Server 常由 Netplan 管理持久网络配置。修改 `/etc/netplan/*.yaml` 前必须保留控制台；远程环境优先使用带自动回滚窗口的 `sudo netplan try`，确认连通后再接受配置。
 
 ## 7. 更新 APT 软件包
+
+APT 的软件源、索引、已安装状态和升级行为见 [[APT 软件包管理基础]]。本节只保留初始化主线需要的最小操作。
 
 先更新索引并审查升级内容：
 
@@ -230,45 +280,32 @@ sudo apt upgrade
 **执行位置：Ubuntu Server（控制台，任意目录）**
 
 ```bash
+# Ubuntu 在需要重启以完成更新时创建此标记文件；`-f` 同时确认它存在且是普通文件。
 if test -f /var/run/reboot-required; then
+  # 输出系统记录的重启提示。
   cat /var/run/reboot-required
+  # `.pkgs` 会列出触发该提示的软件包；文件可能不存在，故隐藏错误并以成功状态继续。
   cat /var/run/reboot-required.pkgs 2>/dev/null || true
 else
+  # 没有标记文件通常表示当前更新未要求重启。
   printf '%s\n' '当前未检测到 reboot-required 标记。'
 fi
 ```
 
-不要直接删除 `/var/lib/dpkg/lock*` 处理锁冲突。先检查是否有正常更新任务：
+如果 `apt update` 或 `apt upgrade` 提示无法获取锁，按 [[APT 软件包管理基础#5.5 处理锁冲突与重启提示]] 区分正常占用、异常中断和重启提示。
 
-**执行位置：Ubuntu Server（控制台，任意目录）**
+## 8. 核对并建立 OpenSSH 入口
 
-```bash
-ps -ef | grep -E '[a]pt|[d]pkg|[u]nattended'
-systemctl status apt-daily.service apt-daily-upgrade.service --no-pager || true
-```
+如果已在 Ubuntu Server 安装器的 **SSH Setup** 页面勾选 **Install OpenSSH server**，安装器已经安装 `openssh-server`，无需重复安装；如果没有勾选，先按 [[APT 软件包管理基础]] 安装该软件包。
 
-## 8. 建立 OpenSSH 入口
-
-如果需要远程管理，安装并启动 OpenSSH 服务端：
-
-**执行位置：Ubuntu Server（控制台，任意目录）**
-
-```bash
-sudo apt install openssh-server
-sudo systemctl enable --now ssh.service
-sudo sshd -t
-systemctl is-active ssh.service
-sudo ss -lntp | grep sshd
-```
-
-预期配置语法通过、服务状态为 `active`，并存在监听端口。首次指纹核验、用户密钥、`known_hosts`、`authorized_keys`、客户端配置和安全收紧必须继续按 [[OpenSSH 连接、密钥与主机指纹]] 操作。
+随后完整执行 [[OpenSSH 连接、密钥与主机指纹#3. 在服务端准备 sshd]]：由该专题统一说明 socket activation、配置检查、有效端口和监听状态。首次指纹核验、用户密钥、客户端配置和认证收紧也继续在该专题完成，不在初始化清单中复制另一套命令。
 
 ## 9. 安全启用 UFW
 
 UFW 是主机防火墙管理工具。启用前先确认：
 
 - 控制台仍可登录。
-- `sshd` 已运行。
+- OpenSSH 的 `ssh.socket` 或 `ssh.service` 激活路径已就绪。
 - SSH 实际端口与将要放行的规则一致。
 - 至少一个新的 SSH 会话已经成功。
 
@@ -277,12 +314,14 @@ UFW 是主机防火墙管理工具。启用前先确认：
 **执行位置：Ubuntu Server（控制台或仍可用的 SSH 会话）**
 
 ```bash
-sudo apt install ufw
-sudo ufw status verbose
-sudo ufw app info OpenSSH
-sudo ufw allow OpenSSH
-sudo ufw enable
-sudo ufw status numbered
+if sudo apt install ufw &&
+   sudo ufw status verbose &&
+   sudo ufw app info OpenSSH &&
+   sudo ufw allow OpenSSH; then
+  sudo ufw enable && sudo ufw status numbered
+else
+  printf '%s\n' '停止：UFW 安装、状态检查或 OpenSSH 放行失败，未执行 ufw enable。' >&2
+fi
 ```
 
 启用后保留当前会话，从另一终端重新登录。新会话失败时，从控制台暂时恢复：
@@ -313,7 +352,16 @@ journalctl -p warning -b --no-pager
 **执行位置：Ubuntu Server（当前普通用户家目录）**
 
 ```bash
-baseline_file="$HOME/system-baseline-$(date +%Y%m%d-%H%M%S).txt"
+(
+set -e
+set -o pipefail
+
+if ! baseline_file="$(mktemp "$HOME/system-baseline.XXXXXX")"; then
+  printf '%s\n' '停止：无法创建唯一的基线文件。' >&2
+  exit 1
+fi
+readonly baseline_file
+printf 'baseline_file=%s\n' "$baseline_file"
 
 {
   printf 'captured_at=%s\n' "$(date --iso-8601=seconds)"
@@ -336,17 +384,20 @@ baseline_file="$HOME/system-baseline-$(date +%Y%m%d-%H%M%S).txt"
   printf '\n[failed-units]\n'
   systemctl --failed --no-pager
   printf '\n[ssh]\n'
-  systemctl is-enabled ssh.service 2>&1
-  systemctl is-active ssh.service 2>&1
+  systemctl show ssh.socket ssh.service \
+    --property=Id --property=LoadState \
+    --property=UnitFileState --property=ActiveState \
+    --no-pager 2>&1
   printf '\n[ufw]\n'
   sudo ufw status verbose
 } | tee "$baseline_file"
 
 chmod 0600 "$baseline_file"
 stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
+)
 ```
 
-保存前检查内容，不要加入密码、令牌、私钥、`/etc/shadow` 或完整环境变量。该文本只用于比较状态，不是系统备份。
+代码块在独立子 Shell 中启用 `errexit` 与 `pipefail`：任一采集命令或 `tee` 失败时，整体返回非零，不会继续把部分结果当作成功基线。`mktemp` 创建的唯一文件默认仅当前用户可读写；失败时可能保留一份已输出路径的部分文件，核对后再决定是否删除。保存内容不要加入密码、令牌、私钥、`/etc/shadow` 或完整环境变量。该文本只用于比较状态，不是系统备份。
 
 ## 常见问题
 
@@ -357,6 +408,14 @@ stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
 ### 时间一直不同步
 
 确认网络和 DNS，检查实际 NTP 服务日志，并确认没有多个时间服务争用。虚拟机暂停恢复后可能需要短暂重新校时。
+
+### `apt` 提示无法获取锁
+
+不要直接删除 `/var/lib/dpkg/lock*`；锁文件消失并不等于占用任务安全结束。检查命令、判断顺序和异常中断后的恢复方式统一见 [[APT 软件包管理基础#5.5 处理锁冲突与重启提示]]。
+
+### `sshd -t` 提示 `Missing privilege separation directory: /run/sshd`
+
+这通常需要先区分“配置语法错误”和“绕过 systemd 后运行时目录尚未创建”。按 [[OpenSSH 连接、密钥与主机指纹#sshd -t 提示缺少 /run/sshd]] 核对单元机制、启动前检查和服务日志，不要把手工创建目录当作持久修复。
 
 ### UFW 启用后 SSH 超时
 
@@ -373,7 +432,7 @@ stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
 - [ ] 主机名、`/etc/hosts` 和时区符合预期。
 - [ ] 地址、默认路由、DNS、HTTPS 和时间同步均正常。
 - [ ] APT 索引已更新，升级内容经过审查。
-- [ ] OpenSSH 语法和服务状态已验证。
+- [ ] OpenSSH 语法、激活单元和监听状态已验证。
 - [ ] UFW 先放行管理入口，再启用并用新会话复测。
 - [ ] 失败服务与重要警告日志均已解释。
 - [ ] 非敏感基线记录已检查并妥善保存。
@@ -385,6 +444,7 @@ stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
 - [Ubuntu Server：网络配置](https://documentation.ubuntu.com/server/explanation/networking/configuring-networks/)
 - [Ubuntu Server：使用 timedatectl 与 timesyncd](https://documentation.ubuntu.com/server/how-to/networking/timedatectl-and-timesyncd/)
 - [Ubuntu Server：OpenSSH Server](https://documentation.ubuntu.com/server/how-to/security/openssh-server/)
+- [Ubuntu 24.04 LTS 发布说明：OpenSSH 的 systemd socket activation](https://documentation.ubuntu.com/release-notes/24.04/#openssh)
 - [Ubuntu Server：UFW 防火墙](https://documentation.ubuntu.com/server/how-to/security/firewalls/)
 - [Netplan：安全应用配置](https://netplan.readthedocs.io/en/stable/netplan-try/)
 - [systemd：hostnamectl](https://www.freedesktop.org/software/systemd/man/latest/hostnamectl.html)

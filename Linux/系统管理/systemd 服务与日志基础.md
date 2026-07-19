@@ -10,10 +10,17 @@ tags:
   - systemctl
   - journalctl
 created: 2026-07-17T00:48:00
-updated: 2026-07-17T01:12:07
+updated: 2026-07-20T00:49:15
 ---
 
 本文介绍 systemd、unit、service、启动状态和 journal 日志的基础使用。目标是能回答“服务是否运行、为什么失败、是否会开机启动、配置从哪里加载”，而不是遇到问题就反复 `restart`。
+
+> [!abstract] 本篇掌握目标
+> - **必须熟练**：区分 active 与 enabled，使用 `systemctl status` 和 `journalctl -u` 读取状态与日志，先检查再变更。
+> - **理解会查**：按需使用 start、stop、restart、reload、enable、disable 和 `daemon-reload`，找到 unit 主文件、drop-in 与实际 `ExecStart`，并保留远程恢复通道。
+> - **认识即可**：其他 unit 类型、复杂依赖关系和更高级的 journal 筛选；遇到服务编排或排障时再深入。
+>
+> 通用命令结构与帮助检索见 [[Linux 命令行学习路线与命令地图]] 和 [[Shell 命令结构、类型与帮助系统]]；本文较长的变量、判断和循环代码块可配合 [[Shell 脚本阅读基础]] 阅读。程序、进程与服务的边界见 [[Linux 进程与系统资源常用命令]]。
 
 ## 1. systemd 与 unit
 
@@ -39,18 +46,20 @@ systemd 管理的不只有 service：
 
 ## 2. active 与 enabled 是两个维度
 
-- `active`：服务当前是否运行。
+- `active`：unit 当前被 systemd 认为处于 active 状态；`active (exited)` 等状态不保证存在常驻进程，还要结合 unit 类型、`MainPID` 和 `status` 判断。
 - `enabled`：系统进入对应 target 时是否计划自动启动。
 
-服务可以 active 但 disabled，例如手工启动；也可以 enabled 但因为启动失败而不 active。
+unit 可以 active 但 disabled，例如手工启动；也可以 enabled 但因为启动失败而不 active。
 
 **执行位置：Ubuntu 主机（任意目录，只读）**
 
 ```bash
-systemctl is-active ssh.service
-systemctl is-enabled ssh.service
-systemctl status ssh.service --no-pager
+systemctl is-active ssh.socket
+systemctl is-enabled ssh.socket
+systemctl status ssh.socket ssh.service --no-pager
 ```
+
+Ubuntu 的 OpenSSH 可能由 `ssh.socket` 监听并按需激活 `ssh.service`，因此 service 显示 inactive 或 disabled 时，SSH 入口仍可能正常；这里同时查看两个 unit，不能只凭 service 一项下结论。具体机制见 [[OpenSSH 连接、密钥与主机指纹#3. 在服务端准备 sshd]]。
 
 列出本次系统中的失败 unit：
 
@@ -79,13 +88,14 @@ systemctl --failed --no-pager
 **执行位置：Ubuntu 主机（具有 sudo 权限的会话，任意目录）**
 
 ```bash
+(
 printf '请输入 service 基名，不含 .service：'
 IFS= read -r SERVICE_NAME
 printf '请输入动作 start、stop、restart 或 reload：'
 IFS= read -r SERVICE_ACTION
 
 case "$SERVICE_NAME" in
-  ''|*[!A-Za-z0-9@_.-]*)
+  ''|-*|*[!A-Za-z0-9@_.-]*)
     printf '%s\n' '停止：service 名称格式不符合本文保护规则。' >&2
     exit 1
     ;;
@@ -102,7 +112,10 @@ case "$SERVICE_ACTION" in
 esac
 
 systemctl status "$SERVICE_NAME.service" --no-pager
+)
 ```
+
+这些含输入校验的代码块显式运行在圆括号创建的子 Shell 中；校验失败时的 `exit` 只停止当前代码块，不会退出登录 Shell。后文同类代码块采用相同边界。
 
 如果服务配置有自己的校验命令，应在 restart/reload 前运行。例如 OpenSSH 使用 `sshd -t`，Nginx 使用 `nginx -t`。systemd 的启动失败信息不能替代服务自身语法校验。
 
@@ -113,13 +126,14 @@ systemctl status "$SERVICE_NAME.service" --no-pager
 **执行位置：Ubuntu 主机（具有 sudo 权限的会话，任意目录）**
 
 ```bash
+(
 printf '请输入 service 基名，不含 .service：'
 IFS= read -r SERVICE_NAME
 printf '请输入动作 enable 或 disable：'
 IFS= read -r ENABLE_ACTION
 
 case "$SERVICE_NAME" in
-  ''|*[!A-Za-z0-9@_.-]*)
+  ''|-*|*[!A-Za-z0-9@_.-]*)
     printf '%s\n' '停止：service 名称格式不符合本文保护规则。' >&2
     exit 1
     ;;
@@ -136,6 +150,7 @@ case "$ENABLE_ACTION" in
 esac
 
 systemctl is-enabled "$SERVICE_NAME.service"
+)
 ```
 
 如果明确需要“设置开机启动并立即启动”，可在核对依赖、端口和数据目录后执行：
@@ -143,11 +158,12 @@ systemctl is-enabled "$SERVICE_NAME.service"
 **执行位置：Ubuntu 主机（具有 sudo 权限的会话，任意目录）**
 
 ```bash
+(
 printf '请输入 service 基名，不含 .service：'
 IFS= read -r SERVICE_NAME
 
 case "$SERVICE_NAME" in
-  ''|*[!A-Za-z0-9@_.-]*)
+  ''|-*|*[!A-Za-z0-9@_.-]*)
     printf '%s\n' '停止：service 名称格式不符合本文保护规则。' >&2
     exit 1
     ;;
@@ -155,6 +171,7 @@ esac
 
 sudo systemctl enable --now "$SERVICE_NAME.service"
 systemctl status "$SERVICE_NAME.service" --no-pager
+)
 ```
 
 不要批量 enable 不理解的服务。
@@ -166,17 +183,19 @@ systemctl status "$SERVICE_NAME.service" --no-pager
 **执行位置：Ubuntu 主机（任意目录，只读）**
 
 ```bash
+(
 printf '请输入 service 基名，不含 .service：'
 IFS= read -r SERVICE_NAME
 
 case "$SERVICE_NAME" in
-  ''|*[!A-Za-z0-9@_.-]*)
+  ''|-*|*[!A-Za-z0-9@_.-]*)
     printf '%s\n' '停止：service 名称格式不符合本文保护规则。' >&2
     exit 1
     ;;
 esac
 
 sudo journalctl -u "$SERVICE_NAME.service" -b --no-pager
+)
 ```
 
 ### 最近日志
@@ -184,17 +203,19 @@ sudo journalctl -u "$SERVICE_NAME.service" -b --no-pager
 **执行位置：Ubuntu 主机（任意目录，只读）**
 
 ```bash
+(
 printf '请输入 service 基名，不含 .service：'
 IFS= read -r SERVICE_NAME
 
 case "$SERVICE_NAME" in
-  ''|*[!A-Za-z0-9@_.-]*)
+  ''|-*|*[!A-Za-z0-9@_.-]*)
     printf '%s\n' '停止：service 名称格式不符合本文保护规则。' >&2
     exit 1
     ;;
 esac
 
 sudo journalctl -u "$SERVICE_NAME.service" -n 100 --no-pager
+)
 ```
 
 ### 持续跟踪
@@ -202,17 +223,19 @@ sudo journalctl -u "$SERVICE_NAME.service" -n 100 --no-pager
 **执行位置：Ubuntu 主机（交互式终端，任意目录；按 `Ctrl-C` 退出）**
 
 ```bash
+(
 printf '请输入 service 基名，不含 .service：'
 IFS= read -r SERVICE_NAME
 
 case "$SERVICE_NAME" in
-  ''|*[!A-Za-z0-9@_.-]*)
+  ''|-*|*[!A-Za-z0-9@_.-]*)
     printf '%s\n' '停止：service 名称格式不符合本文保护规则。' >&2
     exit 1
     ;;
 esac
 
 sudo journalctl -u "$SERVICE_NAME.service" -f
+)
 ```
 
 ### 系统级警告
@@ -242,20 +265,28 @@ sudo journalctl -b -p warning --no-pager
 **执行位置：Ubuntu 主机（具有 sudo 权限的会话，任意目录）**
 
 ```bash
+(
 printf '请输入 service 基名，不含 .service：'
 IFS= read -r SERVICE_NAME
 
 case "$SERVICE_NAME" in
-  ''|*[!A-Za-z0-9@_.-]*)
+  ''|-*|*[!A-Za-z0-9@_.-]*)
     printf '%s\n' '停止：service 名称格式不符合本文保护规则。' >&2
     exit 1
     ;;
 esac
 
-sudo systemctl daemon-reload
-sudo systemctl restart "$SERVICE_NAME.service"
-systemctl status "$SERVICE_NAME.service" --no-pager
-sudo journalctl -u "$SERVICE_NAME.service" -b -n 100 --no-pager
+if sudo systemctl daemon-reload &&
+   sudo systemctl restart "$SERVICE_NAME.service"; then
+  systemctl status "$SERVICE_NAME.service" --no-pager
+  sudo journalctl -u "$SERVICE_NAME.service" -b -n 100 --no-pager
+else
+  printf '%s\n' 'daemon-reload 或 restart 失败；未继续假定新 unit 已生效。' >&2
+  systemctl status "$SERVICE_NAME.service" --no-pager || true
+  sudo journalctl -u "$SERVICE_NAME.service" -b -n 100 --no-pager || true
+  exit 1
+fi
+)
 ```
 
 若重启失败，先用 journal 和服务自身校验定位原因。需要恢复时还原之前保存的 unit/drop-in，再次 `daemon-reload` 和 restart。
@@ -265,11 +296,12 @@ sudo journalctl -u "$SERVICE_NAME.service" -b -n 100 --no-pager
 **执行位置：Ubuntu 主机（任意目录，只读）**
 
 ```bash
+(
 printf '请输入 service 基名，不含 .service：'
 IFS= read -r SERVICE_NAME
 
 case "$SERVICE_NAME" in
-  ''|*[!A-Za-z0-9@_.-]*)
+  ''|-*|*[!A-Za-z0-9@_.-]*)
     printf '%s\n' '停止：service 名称格式不符合本文保护规则。' >&2
     exit 1
     ;;
@@ -283,6 +315,7 @@ systemctl show "$SERVICE_NAME.service" \
   -p Group \
   -p ExecStart \
   -p Restart
+)
 ```
 
 不要直接修改 `/usr/lib/systemd/system` 或 `/lib/systemd/system` 中由软件包管理的文件。管理员覆盖通常放在：
