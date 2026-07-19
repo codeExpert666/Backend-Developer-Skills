@@ -1,5 +1,6 @@
 # Obsidian local workspace, plug-ins, themes, and agent session data
 .obsidian/
+.claudian/
 
 # Operating-system metadata
 .DS_Store

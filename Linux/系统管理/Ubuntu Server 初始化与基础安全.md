@@ -11,7 +11,7 @@ tags:
   - Linux/安全
   - Ubuntu
 created: 2026-07-16T00:31:57
-updated: 2026-07-18T19:52:31
+updated: 2026-07-19T18:55:27
 ---
 
 本文给出一台新装 Ubuntu Server 的通用初始化顺序：先保留控制台恢复入口，再核对身份、主机名、时区、网络、DNS、时间和软件包，最后建立 OpenSSH、UFW 与服务基线。
@@ -96,8 +96,11 @@ systemctl --failed --no-pager
 **执行位置：Ubuntu Server（控制台，任意目录）**
 
 ```bash
+# 刷新 sudo 的认证缓存；必要时会提示输入当前用户密码。
 sudo -v
+# 列出当前用户可通过 sudo 执行的命令及其限制。
 sudo -l
+# 以 root 身份执行 id，确认 sudo 提权是否生效。
 sudo id
 ```
 
