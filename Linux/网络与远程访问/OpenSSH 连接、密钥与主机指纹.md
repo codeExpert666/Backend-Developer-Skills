@@ -12,7 +12,7 @@ tags:
   - SSH
   - OpenSSH
 created: 2026-07-16T00:28:30
-updated: 2026-07-17T01:12:07
+updated: 2026-07-18T19:52:31
 ---
 
 SSH 是一套加密的远程访问协议。OpenSSH 通常由客户端 `ssh` 和服务端 `sshd` 配合工作：客户端验证主机身份，再证明自己有权以某个 Linux 用户登录，最后获得受该用户权限约束的远程 Shell。
@@ -79,7 +79,7 @@ sudo sshd -T | grep -E '^(port|listenaddress|pubkeyauthentication|passwordauthen
 
 ## 4. 取得地址并验证端口
 
-在服务端读取当前地址，不把一次 DHCP 地址当作永久事实：
+在服务端读取当前地址，不把一次 DHCP 地址当作永久事实。网络接口、地址前缀和默认路由的读取方法见 [[Linux 网络接口、IP 地址、路由与 DNS 基础]]。
 
 **执行位置：Linux 服务端（控制台，任意目录）**
 
