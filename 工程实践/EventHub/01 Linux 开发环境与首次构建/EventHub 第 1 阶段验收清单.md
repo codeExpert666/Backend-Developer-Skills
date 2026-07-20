@@ -10,7 +10,7 @@ tags:
   - 验收
   - 备份恢复
 created: 2026-07-17T00:48:00
-updated: 2026-07-19T17:45:42
+updated: 2026-07-20T21:49:36
 ---
 
 本文定义 EventHub 第 1 阶段的退出标准。它只说明需要证明什么，不把尚未执行的步骤写成已经成功。实际版本、提交和命令结果写入新的执行记录。
@@ -34,7 +34,12 @@ updated: 2026-07-19T17:45:42
 - [ ] 主机名、时区、HOME、目录属主和权限符合预期。
 - [ ] APT 软件包索引和更新状态已经审查。
 - [ ] 能使用 `systemctl` 和 `journalctl` 检查服务与日志。
-- [ ] UFW 启用时已经先放行 SSH，并通过新会话验证。
+- [ ] 能解释 UFW 软件包、已保存规则、当前运行状态和开机启用状态的区别。
+- [ ] OpenSSH application profile 已与有效配置和实际监听端口比较。
+- [ ] UFW 启用前已经保留控制台与旧会话，并先添加匹配实际端口的 SSH 规则。
+- [ ] `ufw status verbose` 显示预期运行状态、默认策略和允许规则。
+- [ ] UFW 启用后已经通过另一个终端建立新的 SSH 会话。
+- [ ] 能解释 `ufw disable`、`ufw delete` 和 `ufw reset` 的区别及恢复边界。
 
 建议证据：
 
@@ -52,6 +57,11 @@ timedatectl status
 ip -brief address
 ip route
 getent hosts archive.ubuntu.com
+sudo sshd -T | grep '^port '
+sudo ss -lntp
+sudo ufw app info OpenSSH
+sudo ufw status verbose
+sudo ufw status numbered
 ```
 
 ## 2. SSH 日常主路径
@@ -61,6 +71,7 @@ getent hosts archive.ubuntu.com
 - [ ] 新开 SSH 会话仍然成功，不依赖仍打开的旧会话。
 - [ ] `~/.ssh/config` 使用可维护的主机别名，不把动态 IP 当作永久事实。
 - [ ] 能解释客户端私钥、服务端 `authorized_keys` 和客户端 `known_hosts` 的区别。
+- [ ] 能区分 SSH 监听、主机防火墙放行和 SSH 用户认证。
 - [ ] 知道如何通过 UTM 控制台恢复错误的 `sshd` 或 UFW 配置。
 - [ ] MacBook Air/Tailscale 路径若未配置，已经明确记录为可选而非失败项。
 

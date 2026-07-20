@@ -10,7 +10,7 @@ tags:
   - Docker/Ubuntu
   - Docker/Engine
 created: 2026-07-13T22:43:39
-updated: 2026-07-13T22:54:50
+updated: 2026-07-20T21:49:36
 ---
 
 本文用于在 Ubuntu LTS 上安装 Docker Engine，适合本地 Linux 开发机、CI Runner 和服务器。若宿主机是 macOS 或 Windows，请先回到 [[Docker 安装概览]] 选择 Docker Desktop 路线；若 Ubuntu 是 WSL 2 中的发行版，先阅读 [[WSL 2 中安装 Docker Engine]]，确认自己没有同时使用 Docker Desktop integration。
@@ -204,7 +204,7 @@ sudo journalctl -u docker.service -n 100 --no-pager
 
 ### 发布端口后 UFW 规则没有生效
 
-Docker 官方文档明确提示，Docker 发布的容器端口可能绕过 `ufw` 或 `firewalld` 规则。生产服务器应同时审查 Docker 的端口发布、云安全组、宿主机防火墙和应用认证；不要仅凭 `ufw status` 判断服务没有对外暴露。
+Docker 官方文档明确提示，Docker 发布的容器端口可能绕过 `ufw` 或 `firewalld` 规则。生产服务器应同时审查 Docker 的端口发布、云安全组、宿主机防火墙和应用认证；不要仅凭 `ufw status` 判断服务没有对外暴露。主机防火墙的基础观察和规则模型见 [[Linux 主机防火墙与 UFW 基础#12. 与 Tailscale、Docker 和上游防火墙的边界]]，Docker 的底层规则仍以本篇所列官方文档为准。
 
 ### 如何升级 Docker Engine
 

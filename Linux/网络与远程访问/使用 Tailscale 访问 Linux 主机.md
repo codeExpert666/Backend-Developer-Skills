@@ -11,12 +11,12 @@ tags:
   - Tailscale
   - SSH
 created: 2026-07-16T00:28:30
-updated: 2026-07-17T01:12:07
+updated: 2026-07-20T23:40:53
 ---
 
 Tailscale 基于 WireGuard 建立受身份和访问策略控制的覆盖网络，使不同局域网或 NAT 后的设备可以互相到达。本篇采用清晰主线：**Tailscale 只解决网络可达性，登录仍使用传统 OpenSSH**。
 
-Tailscale 是远程访问扩展，不替代同一局域网内的 SSH，也不替代 `sshd`、Linux 用户权限、主机指纹和用户密钥。应先独立完成 [[OpenSSH 连接、密钥与主机指纹]]，再引入 Tailscale。
+Tailscale 是远程访问扩展，不替代同一局域网内的 SSH，也不替代 `sshd`、主机防火墙、Linux 用户权限、主机指纹和用户密钥。应先独立完成 [[OpenSSH 连接、密钥与主机指纹]]，并理解 [[Linux 主机防火墙与 UFW 基础]]，再引入 Tailscale。
 
 > [!info] 核对日期
 > 本文于 **2026-07-17** 核对 Tailscale 官方文档。客户端安装界面、访问控制语法和产品能力可能变化，启用前应重新查看当前官方文档与所在 tailnet 的策略。
@@ -72,7 +72,7 @@ flowchart LR
 ```bash
 systemctl is-active ssh.service
 sudo sshd -t
-sudo ss -lntp | grep sshd
+sudo ss -lntp
 ip -brief address
 ```
 
@@ -85,7 +85,7 @@ command -v ssh
 command -v tailscale || true
 ```
 
-如果传统 SSH 本身失败，应先修复 [[OpenSSH 连接、密钥与主机指纹]] 中对应层次，不要用 Tailscale 掩盖服务端问题。
+如果传统 SSH 本身失败，应先修复 [[OpenSSH 连接、密钥与主机指纹]] 中对应层次，不要用 Tailscale 掩盖服务端问题。应从 OpenSSH 有效配置确认端口，再在 `ss` 输出中匹配对应的 `Local Address:Port`；使用 `ssh.socket` 时，监听进程可能显示为 `systemd`，因此不要只执行 `grep sshd`，详见 [[Linux 端口、监听套接字与 ss 命令基础#7. 在 SSH 排查中怎样使用]]。
 
 ## 5. 在 Linux 主机安装 Tailscale
 
@@ -156,16 +156,24 @@ tailscale netcheck
 **执行位置：远程客户端（任意目录）**
 
 ```bash
+(
 printf '请输入目标 Linux 主机的 MagicDNS 名称或 Tailscale 地址：'
 IFS= read -r TS_HOST
+case "$TS_HOST" in
+  ''|-*)
+    printf '%s\n' '停止：目标名称或地址为空，或以连字符开头。' >&2
+    exit 1
+    ;;
+esac
 tailscale ping "$TS_HOST"
-nc -vz "$TS_HOST" 22
+nc -vz -w 5 "$TS_HOST" 22
+)
 ```
 
 判断：
 
 1. `tailscale ping` 成功：节点身份、基础可达性和策略大体正常。
-2. TCP 22 成功：路径上的访问控制、防火墙和监听端口允许连接。
+2. TCP 22 成功：从当前客户端到本次解析地址的 TCP 连接已经建立；它不证明对端一定是 OpenSSH，也不证明主机指纹或用户密钥正确，详见 [[TCP 端口连通性测试与 nc 命令基础]]。
 3. 之后的 `Permission denied`：优先检查 Linux 用户和 SSH 密钥。
 
 使用传统 OpenSSH 登录：
@@ -234,6 +242,8 @@ ACL 是较早的访问控制模型，grants 是更通用的新模型；已有 ta
 
 若要让 UFW 只允许 `tailscale0` 上的 SSH，必须先设计并验证本地控制台或其他救援路径。不要在唯一远程会话中直接删除原有 SSH 放行规则。
 
+UFW 的默认策略、application profile、来源与接口范围、启用和恢复流程见 [[Linux 主机防火墙与 UFW 基础]]。本篇只说明 tailnet 策略与主机防火墙的分层关系，不复制另一套 UFW 初始化流程。
+
 ## 11. 常见问题
 
 ### 看不到 Linux 节点
@@ -256,7 +266,7 @@ timedatectl status
 
 ```bash
 systemctl is-active ssh.service
-sudo ss -lntp | grep sshd
+sudo ss -lntp
 sudo ufw status verbose
 sudo journalctl -u ssh.service -n 100 --no-pager
 ```

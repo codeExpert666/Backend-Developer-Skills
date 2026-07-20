@@ -11,15 +11,15 @@ tags:
   - Linux/安全
   - Ubuntu
 created: 2026-07-16T00:31:57
-updated: 2026-07-20T00:49:15
+updated: 2026-07-20T22:24:50
 ---
 
 本文给出一台新装 Ubuntu Server 的通用初始化顺序：先保留控制台恢复入口，再核对身份、主机名、时区、网络、DNS、时间和软件包，最后核对或建立 OpenSSH 入口、UFW 与服务基线。
 
-这里的目标是得到一台可维护的学习或开发主机，不是直接套用生产服务器的加固清单。命令行的通用阅读方法见 [[Linux 命令行学习路线与命令地图]]，用户与权限详见 [[Linux 用户、用户组、sudo 与文件权限]]，软件包管理详见 [[APT 软件包管理基础]]，服务和日志详见 [[systemd 服务与日志基础]]，网络字段与验证命令详见 [[Linux 网络接口、IP 地址、路由与 DNS 基础]]，远程登录详见 [[OpenSSH 连接、密钥与主机指纹]]。
+这里的目标是得到一台可维护的学习或开发主机，不是直接套用生产服务器的加固清单。命令行的通用阅读方法见 [[Linux 命令行学习路线与命令地图]]，用户与权限详见 [[Linux 用户、用户组、sudo 与文件权限]]，软件包管理详见 [[APT 软件包管理基础]]，服务和日志详见 [[systemd 服务与日志基础]]，网络字段与验证命令详见 [[Linux 网络接口、IP 地址、路由与 DNS 基础]]，远程登录详见 [[OpenSSH 连接、密钥与主机指纹]]，主机防火墙原理与规则管理详见 [[Linux 主机防火墙与 UFW 基础]]。
 
 > [!info] 核对日期与适用范围
-> 本文于 **2026-07-19** 核对 Ubuntu Server 和 systemd 官方资料。不同 Ubuntu 版本、镜像预装组件和网络环境可能不同，执行时应以 `/etc/os-release`、本机手册和当前官方文档为准。
+> 本文于 **2026-07-20** 核对 Ubuntu Server、UFW 和 systemd 官方资料。不同 Ubuntu 版本、镜像预装组件和网络环境可能不同，执行时应以 `/etc/os-release`、本机手册和当前官方文档为准。
 
 ## 本篇掌握目标
 
@@ -48,13 +48,13 @@ flowchart TD
     C --> D["设置主机名与时区"]
     D --> E["验证网络、DNS 与时间"]
     E --> F["更新软件包"]
-    F --> G["核对并建立 OpenSSH 入口"]
-    G --> H["先放行 SSH，再启用 UFW"]
-    H --> I["保留旧会话，另开新会话复测"]
+    F --> G["建立并验证 OpenSSH 会话"]
+    G --> H["保留已验证会话，先放行 SSH，再启用 UFW"]
+    H --> I["启用后新建 SSH 会话复测"]
 ```
 
 > [!warning] 控制台是网络配置失败时的恢复入口
-> 在新的 SSH 会话通过验证前，不要关闭控制台和当前可用会话。远程修改网络、`sshd` 或 UFW 后立刻断开唯一连接，可能把自己锁在主机外。
+> 在 UFW 启用后的新 SSH 会话通过验证前，不要关闭控制台和原有可用会话。远程修改网络、`sshd` 或 UFW 后立刻断开唯一连接，可能把自己锁在主机外。
 
 ## 2. 只读盘点当前系统
 
@@ -294,37 +294,104 @@ fi
 
 如果 `apt update` 或 `apt upgrade` 提示无法获取锁，按 [[APT 软件包管理基础#5.5 处理锁冲突与重启提示]] 区分正常占用、异常中断和重启提示。
 
-## 8. 核对并建立 OpenSSH 入口
+## 8. 建立并验证 OpenSSH 会话
 
 如果已在 Ubuntu Server 安装器的 **SSH Setup** 页面勾选 **Install OpenSSH server**，安装器已经安装 `openssh-server`，无需重复安装；如果没有勾选，先按 [[APT 软件包管理基础]] 安装该软件包。
 
-随后完整执行 [[OpenSSH 连接、密钥与主机指纹#3. 在服务端准备 sshd]]：由该专题统一说明 socket activation、配置检查、有效端口和监听状态。首次指纹核验、用户密钥、客户端配置和认证收紧也继续在该专题完成，不在初始化清单中复制另一套命令。
+随后从 [[OpenSSH 连接、密钥与主机指纹#3. 在服务端准备 sshd]] 开始完成服务端检查与客户端登录。socket activation、有效端口、主机指纹、用户密钥和认证收紧均由该专题说明，本初始化清单只保留进入 UFW 前必须达到的状态。
+
+> [!success] 进入 UFW 步骤前的返回检查点
+> - Ubuntu Server 控制台仍可登录。
+> - OpenSSH 的实际激活路径、有效配置和监听端口已经核对。
+> - 客户端已核对主机指纹并成功登录；保留一条可用会话，同时从另一终端重新登录成功。
+>
+> 如果还没有成功建立客户端 SSH 会话，不进入第 9 节。
 
 ## 9. 安全启用 UFW
 
-UFW 是主机防火墙管理工具。启用前先确认：
+UFW 的规则模型与排障方法见 [[Linux 主机防火墙与 UFW 基础]]。本节只保留新主机的安全启用顺序：检查现状、匹配 SSH 端口、添加规则、启用并用新连接验证。
 
-- 控制台仍可登录。
-- OpenSSH 的 `ssh.socket` 或 `ssh.service` 激活路径已就绪。
-- SSH 实际端口与将要放行的规则一致。
-- 至少一个新的 SSH 会话已经成功。
+### 9.1 安装并检查现状
 
-如果使用默认 OpenSSH 服务定义：
+第 8 节的控制台和已验证 SSH 会话必须仍然可用。先安装 UFW，再读取当前状态和已保存规则：
 
-**执行位置：Ubuntu Server（控制台或仍可用的 SSH 会话）**
+**执行位置：Ubuntu Server（控制台或已验证的 SSH 会话，任意目录）**
 
 ```bash
-if sudo apt install ufw &&
-   sudo ufw status verbose &&
-   sudo ufw app info OpenSSH &&
-   sudo ufw allow OpenSSH; then
-  sudo ufw enable && sudo ufw status numbered
-else
-  printf '%s\n' '停止：UFW 安装、状态检查或 OpenSSH 放行失败，未执行 ufw enable。' >&2
-fi
+# 安装软件包；这一步不会启用防火墙。
+sudo apt install ufw
 ```
 
-启用后保留当前会话，从另一终端重新登录。新会话失败时，从控制台暂时恢复：
+安装成功后查看运行状态与已添加规则：
+
+```bash
+sudo ufw status verbose
+sudo ufw show added
+```
+
+安装、添加规则和启用是三个独立步骤。若 UFW 已经是 `active`，或存在无法解释的规则，停止套用新主机流程；不要用会清除既有规则的 `ufw reset` 获取空列表。
+
+### 9.2 核对 OpenSSH profile
+
+读取 UFW 为 OpenSSH 提供的 application profile：
+
+```bash
+sudo ufw app info OpenSSH
+```
+
+将输出中的端口与第 8 节确认的实际监听端口比较。`OpenSSH` 是 UFW profile 名称，不是服务状态；只有二者一致时，才继续使用 `allow OpenSSH`。不一致时直接转到 [[Linux 主机防火墙与 UFW 基础#8. 自定义 SSH 端口时如何判断]]，不要猜测端口。
+
+### 9.3 设置策略并添加 SSH 规则
+
+仅在确认没有需要保留的既有策略后执行：
+
+```bash
+# 未命中的新入站连接默认拒绝，出站连接默认允许。
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+```
+
+先预演规则：
+
+```bash
+sudo ufw --dry-run allow OpenSSH
+```
+
+确认预演结果中的协议和端口正确后，再添加并检查规则：
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw show added
+```
+
+本初始化主线不修改 routed/forwarded 策略。`allow OpenSSH` 也不会限制来源地址；需要按网段或接口收紧时，按 [[Linux 主机防火墙与 UFW 基础#9. UFW 规则动作与范围限制]] 单独设计。
+
+### 9.4 启用并验证
+
+保持控制台和原有 SSH 会话，再启用 UFW：
+
+```bash
+sudo ufw enable
+sudo ufw status verbose
+sudo ufw status numbered
+sudo ufw show listening
+```
+
+不要使用 `ufw --force enable` 跳过首次警告。确认 `Status` 为 `active`、默认策略正确，且 OpenSSH 规则与实际端口一致；系统启用 IPv6 时还要核对对应的 IPv6 规则。
+
+随后从客户端重新建立一条 SSH 连接，不复用启用前已经存在的会话。登录成功后执行：
+
+```bash
+hostnamectl --static
+id
+sudo ufw status verbose
+```
+
+只有这条启用后新建的会话稳定成功，才能关闭控制台和原有会话。命令退出状态不能代替对状态、规则和实际连接的检查。
+
+### 9.5 从控制台恢复
+
+如果启用后的新会话失败，从控制台暂时停用 UFW：
 
 **执行位置：Ubuntu Server（控制台）**
 
@@ -333,7 +400,7 @@ sudo ufw disable
 sudo ufw status verbose
 ```
 
-修正规则并复测后再启用。若 `sshd` 使用自定义端口，不能假设 `OpenSSH` 应用配置仍匹配，应先比较 `sudo sshd -T | grep '^port '` 与 UFW 规则。
+`disable` 不会删除已保存规则。恢复连接后按 [[Linux 主机防火墙与 UFW 基础#11. 启用后无法连接时如何恢复]] 比较监听端口、profile、规则和 SSH 日志；修正并复测后再启用，不要把长期关闭防火墙当作修复完成。
 
 ## 10. 检查服务与日志基线
 
@@ -419,7 +486,7 @@ stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
 
 ### UFW 启用后 SSH 超时
 
-从控制台运行 `sudo ufw status numbered`，比较防火墙规则与 `sudo sshd -T | grep '^port '`。必要时先 `sudo ufw disable` 恢复入口。
+从控制台运行 `sudo ufw status numbered`，同时比较 `sudo sshd -T | grep '^port '`、`sudo ss -lntp`、application profile 和防火墙规则。必要时先 `sudo ufw disable` 恢复入口，再按 [[Linux 主机防火墙与 UFW 基础#11. 启用后无法连接时如何恢复]] 分层排查。
 
 ### `systemctl --failed` 出现服务
 
@@ -445,7 +512,7 @@ stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
 - [Ubuntu Server：使用 timedatectl 与 timesyncd](https://documentation.ubuntu.com/server/how-to/networking/timedatectl-and-timesyncd/)
 - [Ubuntu Server：OpenSSH Server](https://documentation.ubuntu.com/server/how-to/security/openssh-server/)
 - [Ubuntu 24.04 LTS 发布说明：OpenSSH 的 systemd socket activation](https://documentation.ubuntu.com/release-notes/24.04/#openssh)
-- [Ubuntu Server：UFW 防火墙](https://documentation.ubuntu.com/server/how-to/security/firewalls/)
+- [Ubuntu Server：UFW 防火墙](https://ubuntu.com/server/docs/how-to/security/firewalls/)
 - [Netplan：安全应用配置](https://netplan.readthedocs.io/en/stable/netplan-try/)
 - [systemd：hostnamectl](https://www.freedesktop.org/software/systemd/man/latest/hostnamectl.html)
 - [systemd：timedatectl](https://www.freedesktop.org/software/systemd/man/latest/timedatectl.html)
