@@ -10,7 +10,7 @@ tags:
   - Bash
   - Shell/脚本
 created: 2026-07-19T23:48:38
-updated: 2026-07-20T00:49:15
+updated: 2026-07-25T14:29:00
 ---
 
 本文帮助初学者读懂 Ubuntu Server 笔记中常见的 Bash 脚本：输入从哪里来、哪些条件会停止、哪些步骤修改系统、怎样验证结果、退出时怎样清理。本文不是完整 Bash 编程教程，也不要求立即独立编写复杂自动化脚本。
@@ -19,7 +19,7 @@ updated: 2026-07-20T00:49:15
 
 | 层级 | 内容 |
 | --- | --- |
-| 必须熟练 | 识别解释器、变量引用、位置参数、`if`、`case`、`for`、退出状态和明显变更命令 |
+| 必须熟练 | 识别解释器、变量引用、位置参数、`test`、`[ ... ]`、`if`、`case`、`for`、退出状态和明显变更命令 |
 | 理解会查 | `while read`、函数、`local`、`trap`、here-document、`set -u` 与 `pipefail` |
 | 认识即可 | 数组高级操作、进程替换、作业控制、复杂算术和 Bash 调试设施 |
 
@@ -119,9 +119,18 @@ target_path=$1
 - 是否可能包含密码、令牌或其他敏感内容。
 - 是否会被打印到日志。
 
-## 6. `test` 与 `[ ... ]` 表达条件
+## 6. 使用 test 表达条件
 
-`[` 是命令，不是普通括号字符，因此内部空格不可省略：
+`test` 不会输出 `true` 或 `false`，而是计算一个条件并通过退出状态报告结果：条件成立通常返回 `0`，不成立通常返回 `1`；表达式写错还可能返回其他非零状态并输出诊断。`if`、`!`、`&&` 与 `||` 正是根据这个状态决定下一步，退出状态的通用规则见 [[Shell 标准流、管道、重定向与退出状态#7. 退出状态表示成功或失败]]。
+
+最小骨架是：
+
+```text
+test 条件表达式
+[ 条件表达式 ]
+```
+
+在 Bash 和 Zsh 中，`test` 与 `[` 通常都是 Shell 内建命令；系统也可能提供同名外部程序。`[ ... ]` 是 `test` 的另一种命令形式，末尾的 `]` 也是必需参数，不是排版括号。因此所有运算符、操作数和结尾的 `]` 都必须分别成为参数：
 
 ```bash
 if [ -f "$target_path" ]; then
@@ -129,22 +138,93 @@ if [ -f "$target_path" ]; then
 fi
 ```
 
-常见条件：
+错误写法 `[-f "$target_path"]` 缺少必要空格，Shell 会把它当成另一个命令名。
 
-| 条件 | 含义 | 当前目标 |
+### 6.1 检查路径是否存在、属于什么类型或能否访问
+
+| 条件 | 成立条件 | 当前目标 |
 | --- | --- | --- |
-| `-e PATH` | 路径存在 | 必须熟练 |
-| `-f PATH` | 存在且是普通文件 | 必须熟练 |
-| `-d PATH` | 存在且是目录 | 必须熟练 |
-| `-r PATH`、`-w PATH`、`-x PATH` | 当前进程可读、可写、可执行或进入 | 理解会查 |
-| `-L PATH` | 路径本身是符号链接 | 理解会查 |
-| `-z STRING`、`-n STRING` | 字符串为空、非空 | 必须熟练 |
-| `STRING_A = STRING_B` | 字符串相等 | 必须熟练 |
-| `INTEGER_A -eq INTEGER_B` | 整数相等 | 理解会查 |
+| `-e PATH` | 路径解析后指向一个存在的对象 | 必须熟练 |
+| `-f PATH` | 路径解析后指向普通文件 | 必须熟练 |
+| `-d PATH` | 路径解析后指向目录 | 必须熟练 |
+| `-L PATH` | 路径最后一段本身是符号链接 | 理解会查 |
+| `-r PATH` | 以当前执行身份判断为可读 | 理解会查 |
+| `-w PATH` | 以当前执行身份判断为可写 | 理解会查 |
+| `-x PATH` | 文件可执行；目录可进入或搜索 | 理解会查 |
+| `-s PATH` | 路径存在且大小大于 `0` | 理解会查 |
 
-错误示例 `[-f "$path"]` 缺少必要空格，Shell 会把它当成另一个命令名。
+除 `-L`（以及同义的 `-h`）外，这些文件条件通常会跟随符号链接，检查链接指向的对象。因此，指向普通文件的符号链接可以同时满足 `-f` 和 `-L`；指向不存在目标的悬空链接通常不满足 `-e`，但仍满足 `-L`。
 
-Bash 还提供 `[[ ... ]]` 条件语法。它在模式匹配和变量处理上比 `[` 更适合 Bash 脚本，但不是所有 `/bin/sh` 都支持。看到 `[[` 时先确认 shebang；不要在未声明 Bash 的脚本中直接引入它。
+这解释了安全脚本中常见的组合：
+
+```bash
+if test -e "$target_path" || test -L "$target_path"; then
+  printf '路径已经被对象或符号链接占用：%s\n' "$target_path" >&2
+fi
+```
+
+`-e || -L` 把悬空链接也视为“路径已占用”，适合在创建文件、目录或链接前避免覆盖已有目录项。
+
+```bash
+if ! test -f "$key_path" || test -L "$key_path"; then
+  printf '不是预期的非符号链接普通文件：%s\n' "$key_path" >&2
+fi
+```
+
+这段保护条件会拒绝不存在的路径、目录、其他特殊文件以及符号链接；只有路径本身不是符号链接、解析结果又是普通文件时才继续。
+
+`-r`、`-w` 和 `-x` 反映的是执行 `test` 的身份所看到的访问条件，不保证后续操作一定成功。父目录权限、只读文件系统、ACL、竞态和后续命令本身都可能改变结果。看到 `sudo test ...` 时，表示只让这一次 `test` 以提升后的身份运行；它不会自动提升同一行之外的其他命令，也不会改变 Shell 自己处理的重定向。
+
+### 6.2 检查字符串和整数
+
+| 条件 | 成立条件 | 当前目标 |
+| --- | --- | --- |
+| `-n STRING` | 字符串长度不为 `0` | 必须熟练 |
+| `-z STRING` | 字符串长度为 `0` | 必须熟练 |
+| `STRING_A = STRING_B` | 两个字符串相等 | 必须熟练 |
+| `STRING_A != STRING_B` | 两个字符串不相等 | 理解会查 |
+| `INTEGER_A -eq INTEGER_B` | 两个整数相等 | 理解会查 |
+| `-ne`、`-lt`、`-le`、`-gt`、`-ge` | 整数不等、小于、小于等于、大于、大于等于 | 理解会查 |
+
+来自变量的操作数应引用，并在允许变量未设置时显式提供默认值：
+
+```bash
+test -n "${JAVA_HOME:-}"
+test "$rollback_mode" = restore
+test "${retry_count:-0}" -ge 3
+```
+
+字符串比较使用 `=`，整数比较使用 `-eq` 等运算符；不要用 `=` 比较整数，也不要把 `-eq` 用于任意文本。
+
+### 6.3 用 Shell 组合条件
+
+以下三种写法分别表示正向判断、Shell 取反和失败时执行右侧命令：
+
+```bash
+if test -f "$config_file"; then
+  printf 'config exists\n'
+fi
+
+if ! test -s "$config_file"; then
+  printf 'config is missing or empty\n' >&2
+fi
+
+test -d "$work_dir" || printf 'work directory is unavailable\n' >&2
+```
+
+`! test -e "$path"` 中的 `!` 由 Shell 处理；`test ! -e "$path"` 则把 `!` 作为 `test` 表达式的一部分。两者都能表达取反，但阅读多条命令组成的条件时，优先明确每一层由 Shell 还是 `test` 解释。
+
+不要为了把所有条件塞进一次 `test` 而依赖容易混淆的 `-a`、`-o` 或括号表达式。仓库中的可读写法优先使用多个完整命令，并由 Shell 的 `&&`、`||` 和分行控制组合；它们还能明确是否需要短路执行右侧条件。
+
+### 6.4 区分 test、[ ... ] 与 [[ ... ]]
+
+| 形式 | 本质 | 主要边界 |
+| --- | --- | --- |
+| `test 表达式` | 命令 | 适合脚本和交互检查，也可以写成 `sudo test ...` |
+| `[ 表达式 ]` | `test` 的命令形式 | 每一部分都要留空格，最后的 `]` 不可省略 |
+| `[[ 表达式 ]]` | Bash、Zsh 等 Shell 的条件语法 | 支持更强的模式处理，但不是通用 `/bin/sh` 语法，也不能直接写成 `sudo [[ ... ]]` |
+
+看到 `[[ ... ]]` 时先确认 shebang 或当前 Shell。不要仅为追求写法统一，就在面向 `/bin/sh` 的脚本中引入它；也不要假设三种形式在模式匹配、引用和扩展运算符上完全相同。
 
 ## 7. `if` 根据状态选择分支
 
@@ -455,6 +535,7 @@ fi
 - [ ] 能用 `bash -n` 做语法检查，并知道它不是安全审计。
 - [ ] 能按输入、前置检查、变更、验证、失败和清理的顺序阅读脚本。
 - [ ] 能解释 `$#`、`$1`、`"$@"` 和位置参数边界。
+- [ ] 能解释 `test` 为什么通常没有输出，并区分 `-e`、`-f`、`-d`、`-L`、`-n` 与 `-s`。
 - [ ] 能读懂基础 `if`、`case`、`for` 和 `while IFS= read -r`。
 - [ ] 能区分 `return` 与 `exit`，知道函数通常在当前 Shell 上下文运行。
 - [ ] 能说明 `trap` 和 `set -euo pipefail` 分别解决什么问题、不能保证什么。
@@ -470,11 +551,13 @@ fi
 
 ## 官方参考资料
 
-以下资料于 **2026-07-19** 核对：
+Shell 脚本通用资料于 **2026-07-19** 核对；`test`、`[`、`[[ ... ]]` 与符号链接条件于 **2026-07-25** 再次核对：
 
 - [GNU Bash：Shell 脚本](https://www.gnu.org/software/bash/manual/html_node/Shell-Scripts.html)
 - [GNU Bash：条件结构](https://www.gnu.org/software/bash/manual/html_node/Conditional-Constructs.html)
+- [GNU Bash：条件表达式](https://www.gnu.org/software/bash/manual/html_node/Bash-Conditional-Expressions.html)
 - [GNU Bash：循环结构](https://www.gnu.org/software/bash/manual/html_node/Looping-Constructs.html)
 - [GNU Bash：Shell 函数](https://www.gnu.org/software/bash/manual/html_node/Shell-Functions.html)
 - [GNU Bash：Bourne Shell 内建命令](https://www.gnu.org/software/bash/manual/html_node/Bourne-Shell-Builtins.html)
+- [POSIX：test](https://pubs.opengroup.org/onlinepubs/9699919799.2016edition/utilities/test.html)
 - [ShellCheck 官方仓库](https://github.com/koalaman/shellcheck)

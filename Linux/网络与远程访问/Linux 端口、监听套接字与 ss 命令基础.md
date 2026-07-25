@@ -10,14 +10,14 @@ tags:
   - Linux/命令行
   - 网络/端口
 created: 2026-07-20T23:28:11
-updated: 2026-07-20T23:40:53
+updated: 2026-07-23T23:20:05
 ---
 
 端口是 TCP、UDP 等传输层协议在一台主机上区分通信入口的数字标识；套接字是 Linux 内核维护的通信端点，包含协议、本地地址与端口、状态等信息。服务只有创建并监听了合适的套接字，内核才有入口把新到达的连接交给它。
 
 `ss` 用于读取 Linux 当前的套接字状态。它能回答“现在是否存在监听套接字、绑定在哪个本地地址和端口、由哪个进程持有”，但不会启动服务、修改服务配置或放行防火墙。
 
-接口、地址和路由见 [[Linux 网络接口、IP 地址、路由与 DNS 基础]]；从实际客户端测试 TCP 路径见 [[TCP 端口连通性测试与 nc 命令基础]]；主机入站规则见 [[Linux 主机防火墙与 UFW 基础]]；SSH 场景见 [[OpenSSH 连接、密钥与主机指纹]]。命令结构和帮助系统见 [[Shell 命令结构、类型与帮助系统]]。
+接口、地址和路由见 [[Linux 网络接口、IP 地址、路由与 DNS 基础]]；从实际客户端测试 TCP 路径见 [[TCP 端口连通性测试与 nc 命令基础]]；主机入站规则见 [[Linux 主机防火墙与 UFW 基础]]；SSH 场景见 [[OpenSSH 密钥登录、服务端配置与排查]]。命令结构和帮助系统见 [[Shell 命令结构、类型与帮助系统]]。
 
 > [!abstract] 本篇掌握目标
 > - **必须熟练**：区分端口、监听套接字、进程和防火墙，能够拆解并阅读 `sudo ss -lntp` 的基础输出。
@@ -179,7 +179,7 @@ sudo ufw app info OpenSSH
 2. `ss` 读取 Linux 内核当前实际存在的 TCP 监听套接字。
 3. `ufw app info OpenSSH` 读取 UFW application profile 声明的协议和端口。
 
-三者的端口一致，仍只完成了服务端检查。最终还需要从真实客户端建立新连接，并继续完成 SSH 主机身份和用户身份验证，详见 [[OpenSSH 连接、密钥与主机指纹#3. 在服务端准备 sshd]] 与 [[Linux 主机防火墙与 UFW 基础#6. 先比较 SSH 配置、监听状态与 UFW profile]]。
+三者的端口一致，仍只完成了服务端检查。最终还需要从真实客户端建立新连接，并继续完成 SSH 主机身份和用户身份验证，详见 [[OpenSSH 密钥登录、服务端配置与排查#2. 在服务端准备 sshd]] 与 [[Linux 主机防火墙与 UFW 基础#6. 先比较 SSH 配置、监听状态与 UFW profile]]。
 
 > [!warning] 不要只用 `grep sshd` 判断 SSH 是否监听
 > Ubuntu 可以由 `ssh.socket` 先持有监听套接字，进程信息可能显示为 `systemd`。先用有效配置确认端口，再比较 `Local Address:Port` 与 `systemctl status ssh.socket ssh.service`，比只执行 `ss -lntp | grep sshd` 更可靠。
@@ -229,7 +229,7 @@ man ss
 - 网络接口、地址、路由与 DNS：[[Linux 网络接口、IP 地址、路由与 DNS 基础]]
 - 客户端 TCP 端口测试：[[TCP 端口连通性测试与 nc 命令基础]]
 - 主机防火墙与端口规则：[[Linux 主机防火墙与 UFW 基础]]
-- SSH 监听、密钥与认证：[[OpenSSH 连接、密钥与主机指纹]]
+- OpenSSH 连接、监听、密钥登录与排查：[[OpenSSH 密钥登录、服务端配置与排查]]
 - Tailscale 与传统 SSH：[[使用 Tailscale 访问 Linux 主机]]
 - 命令学习路线：[[Linux 命令行学习路线与命令地图]]
 

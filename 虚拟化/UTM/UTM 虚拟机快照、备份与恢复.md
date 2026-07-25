@@ -9,7 +9,7 @@ tags:
   - 备份恢复
   - Linux/运维
 created: 2026-07-16T00:28:30
-updated: 2026-07-20T01:06:40
+updated: 2026-07-23T23:20:05
 ---
 
 本文说明如何为 UTM 中的 Linux 虚拟机建立可恢复基线。重点不是“拥有一个快照”，而是区分快速回退点、关机状态的完整 VM 副本、源码备份、数据库备份和身份恢复，并通过隔离恢复演练证明备份可用。
@@ -318,7 +318,7 @@ if command -v tailscale >/dev/null 2>&1; then
 fi
 ```
 
-如果是原 VM 的替换恢复，并且原 VM 保持永久下线，保留原 SSH host key 可以维持客户端信任。如果是新克隆，就不能与原 VM 长期共享同一 SSH 或 Tailscale 身份。SSH 身份处理见 [[OpenSSH 连接、密钥与主机指纹]]，Tailscale 节点处理见 [[使用 Tailscale 访问 Linux 主机]]。
+如果是原 VM 的替换恢复，并且原 VM 保持永久下线，保留原 SSH host key 可以维持客户端信任。如果是新克隆，就不能与原 VM 长期共享同一 SSH 或 Tailscale 身份。SSH 主机身份的信任边界见 [[OpenSSH 密钥登录、服务端配置与排查#4. 首次连接前独立核对主机指纹|SSH 主机身份与指纹核对]]，恢复后的操作见 [[OpenSSH 密钥登录、服务端配置与排查#10. 主机指纹变化|主机指纹变化处理]]，Tailscale 节点处理见 [[使用 Tailscale 访问 Linux 主机]]。
 
 ### 8.4 验证系统和源码
 

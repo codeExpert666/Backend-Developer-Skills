@@ -12,7 +12,7 @@ tags:
   - Antidote
   - Ghostty
 created: 2026-07-19T16:30:50
-updated: 2026-07-19T17:05:02
+updated: 2026-07-25T14:29:00
 ---
 
 本文从 macOS 的系统 Zsh 开始，搭建 Ghostty + Zsh + Antidote + Starship + Atuin + zoxide + fzf。完成后，Ghostty 负责本地图形终端，Antidote 只管理 Zsh 插件，其余工具由 Homebrew 管理；Zsh 配置集中在 `~/.config/zsh`，便于与 Ubuntu 复用。
@@ -154,6 +154,8 @@ fi
 
 test -r "$antidote_dir/antidote.zsh"
 ~~~
+
+末行的 `test -r` 用退出状态确认 Antidote 入口文件对当前用户可读，条件命令见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 Homebrew 公式 `brew install antidote` 也可用，但它的加载路径与 Ubuntu 不同。跨机器配置主路线统一使用 Git 安装目录；该目录和 Antidote 缓存都不提交到配置仓库。
 

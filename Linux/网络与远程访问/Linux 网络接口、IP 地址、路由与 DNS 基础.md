@@ -10,7 +10,7 @@ tags:
   - 网络/基础
   - TCP/IP
 created: 2026-07-18T19:52:31
-updated: 2026-07-20T23:40:53
+updated: 2026-07-23T23:20:05
 ---
 
 本文从一台 Linux 主机的视角，解释网络接口、MAC 地址、IP 地址与子网前缀、DHCP、默认路由和 DNS 之间的关系。目标是能读懂 Ubuntu Server 安装器与常用验证命令，并在修改配置前先定位出问题所在层。
@@ -264,7 +264,7 @@ Netplan 可以描述 DHCP、静态地址、路由、DNS、bond 和桥接等 Ubun
 - 完成新系统基线：[[Ubuntu Server 初始化与基础安全]]
 - 读取端口与监听状态：[[Linux 端口、监听套接字与 ss 命令基础]]
 - 从实际客户端测试 TCP 端口：[[TCP 端口连通性测试与 nc 命令基础]]
-- 验证 SSH 服务与身份：[[OpenSSH 连接、密钥与主机指纹]]
+- 理解 SSH 连接并验证 OpenSSH 服务与登录：[[OpenSSH 密钥登录、服务端配置与排查]]
 - 理解主机入站规则：[[Linux 主机防火墙与 UFW 基础]]
 - 跨局域网扩展访问：[[使用 Tailscale 访问 Linux 主机]]
 

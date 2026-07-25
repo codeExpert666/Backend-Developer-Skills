@@ -12,7 +12,7 @@ tags:
   - Oh-My-Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-07-19T17:05:02
+updated: 2026-07-25T14:29:00
 ---
 
 本文把现有 Oh My Zsh 环境迁移为 Ghostty + Zsh + Antidote + Starship + Atuin + zoxide + fzf。迁移的重点不是删除 Oh My Zsh，而是先盘点现有能力，在新的 `~/.config/zsh` 中并行重建，显式测试后再切换 `ZDOTDIR`；旧 `~/.zshrc` 与 `~/.oh-my-zsh` 会保留到观察期结束。
@@ -131,6 +131,8 @@ for command_name in starship atuin zoxide fzf; do
   fi
 done
 ~~~
+
+`test -r` 用退出状态确认 Antidote 入口文件对当前用户可读，条件命令见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 此时旧 Oh My Zsh 仍是当前会话的启动框架。不要把 Antidote 再 `source` 到旧 `~/.zshrc`，否则会形成两个插件管理体系同时工作。
 

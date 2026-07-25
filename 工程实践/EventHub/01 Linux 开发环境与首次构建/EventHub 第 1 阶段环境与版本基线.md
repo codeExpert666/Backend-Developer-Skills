@@ -10,7 +10,7 @@ tags:
   - 开发环境
   - 版本基线
 created: 2026-07-17T00:48:00
-updated: 2026-07-18T21:14:33
+updated: 2026-07-25T14:29:00
 ---
 
 本文记录 EventHub 第 1 阶段采用的具体环境决策。它不是通用安装教程；资源如何估算见 [[UTM 虚拟机资源规划]]，网络路径如何选择见 [[虚拟机网络模式与可达性]]，工具安装和系统原理通过对应技术笔记学习。
@@ -60,6 +60,8 @@ df -h /
 test -d /Applications/UTM.app && printf 'UTM installed\n' || printf 'UTM not installed\n'
 test -d /Applications/OrbStack.app && printf 'OrbStack installed\n' || printf 'OrbStack not installed\n'
 ```
+
+两条 `test -d` 分别判断应用路径是否指向目录，再由 `&&` 或 `||` 选择对应提示；条件命令见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 这里的 `6 vCPU、12GB、180GB` 只是本阶段起点。若宿主机频繁交换内存，应降低 VM 内存或构建并发；若 Docker 镜像、Maven 缓存和数据库卷增长明显，应在审计数据后扩容，而不是把初始值视为永久标准。
 
@@ -144,7 +146,7 @@ docker info
 - 虚拟机网络：[[虚拟机网络模式与可达性]]
 - 创建虚拟机：[[使用 UTM 创建 Ubuntu Server 虚拟机]]
 - Ubuntu 初始化：[[Ubuntu Server 初始化与基础安全]]
-- SSH：[[OpenSSH 连接、密钥与主机指纹]]
+- SSH：[[OpenSSH 密钥登录、服务端配置与排查]]
 - Tailscale：[[使用 Tailscale 访问 Linux 主机]]
 - Linux 工作区：[[Linux 开发工作区与本地文件系统规划]]
 - Go：[[Ubuntu 安装 Go]]

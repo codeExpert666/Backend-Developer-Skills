@@ -13,7 +13,7 @@ tags:
   - Java/Maven
   - Docker/验证
 created: 2026-07-16T00:29:35
-updated: 2026-07-20T00:49:15
+updated: 2026-07-23T00:57:42
 ---
 
 本文负责把 EventHub Go 与 Java 仓库放入 Ubuntu 本地文件系统，并按迁移后 revision 的真实工程入口完成首次构建、测试和质量门禁。
@@ -33,7 +33,7 @@ updated: 2026-07-20T00:49:15
 开始前应满足：
 
 - 已按 [[EventHub 第 1 阶段环境与版本基线]] 准备 Ubuntu、Git、Go、JDK、Maven、Docker、Compose 和必要的 Node.js。
-- Mac mini 能按 [[OpenSSH 连接、密钥与主机指纹]] 稳定登录虚拟机。
+- Mac mini 能按 [[OpenSSH 密钥登录、服务端配置与排查]] 稳定登录虚拟机。
 - `$HOME/src` 位于 Ubuntu 本地文件系统，符合 [[Linux 开发工作区与本地文件系统规划]]。
 - 已在源机器记录两个仓库的远程、分支、SHA、ahead/behind 和工作区状态。
 - 已区分远端可获得内容与只存在于源机器的工作现场。

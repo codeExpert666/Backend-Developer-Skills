@@ -9,7 +9,7 @@ tags:
   - Java/维护
   - Maven/排障
 created: 2026-07-14T23:30:24
-updated: 2026-07-14T23:41:06
+updated: 2026-07-25T14:29:00
 ---
 
 Java 与 Maven 的环境问题通常来自四个层次：命令搜索路径、JDK 选择、Maven 配置、网络与仓库。排障时应先记录真实状态，再逐层缩小范围；不要一遇到错误就重装全部工具或删除整个 Maven 本地仓库。
@@ -154,7 +154,7 @@ rehash
 
 ## 5. `JAVA_HOME` 错误
 
-先验证当前值：
+先验证当前值。下面的 `test -d` 检查 JDK 根目录，`test -x` 检查 `java` 与 `javac` 是否可执行；条件命令见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 ```bash
 printf 'JAVA_HOME=%s\n' "${JAVA_HOME:-<未设置>}"

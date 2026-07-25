@@ -12,7 +12,7 @@ tags:
   - Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-07-19T17:05:02
+updated: 2026-07-25T14:29:00
 ---
 
 本文在 Ubuntu 上搭建 Zsh + Antidote + Starship + Atuin + zoxide + fzf，并说明 Ubuntu Desktop 与远程 Ubuntu Server 对 Ghostty 的不同处理。配置目录和加载顺序与 [[macOS 从零搭建现代终端环境]] 保持一致，便于跨机器维护。
@@ -186,6 +186,8 @@ fi
 
 test -r "$antidote_dir/antidote.zsh"
 ~~~
+
+末行的 `test -r` 用退出状态确认 Antidote 入口文件对当前用户可读，条件命令见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 不要把 Antidote 安装目录、插件缓存或生成的 `.zsh_plugins.zsh` 提交到配置仓库。跨机器只同步 Zsh 配置、插件清单和可选 snapshot。
 

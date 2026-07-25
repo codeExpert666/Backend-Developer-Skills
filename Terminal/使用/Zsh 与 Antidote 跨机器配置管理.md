@@ -12,7 +12,7 @@ tags:
   - Antidote
   - Dotfiles
 created: 2026-07-19T16:35:26
-updated: 2026-07-19T16:53:12
+updated: 2026-07-25T14:29:00
 ---
 
 本文给出一套可在 macOS 与 Ubuntu 间复用的 Zsh 配置骨架。Antidote 只管理 Zsh 插件；Starship、Atuin、zoxide 和 fzf 都是独立二进制，由系统包管理器安装，再从 `.zshrc` 接入。整体安装顺序见 [[现代终端环境搭建概览]]，从 Oh My Zsh 切换时先阅读 [[从 Oh My Zsh 迁移到 Antidote]]。
@@ -109,6 +109,8 @@ if [ ! -d "$antidote_dir/.git" ]; then
 fi
 test -r "$antidote_dir/antidote.zsh"
 ~~~
+
+末行的 `test -r` 用退出状态确认 Antidote 入口文件对当前用户可读，条件命令见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 这个目录是可重新下载的工具安装目录，不进入 dotfiles 仓库。若已通过 Homebrew 安装 Antidote，可以按包管理器说明加载其路径，但不要把该平台路径写进共享 `.zshrc`。
 

@@ -10,7 +10,7 @@ tags:
   - Java/Ubuntu
   - Maven
 created: 2026-07-14T23:30:24
-updated: 2026-07-14T23:42:04
+updated: 2026-07-25T14:29:00
 ---
 
 本文用于在 Ubuntu 上从零安装 JDK 和 Apache Maven，并完成环境变量与真实构建验证。主线采用 Ubuntu 官方 apt 仓库，适合个人开发机、虚拟机以及允许使用发行版软件包的服务器。
@@ -131,7 +131,7 @@ source "$HOME/.bashrc"
 
 如果当前使用 Zsh，把目标文件改为 `~/.zshrc`。Shell 配置的职责和加载顺序可结合 [[Ubuntu 从零安装 Oh My Zsh]] 理解。
 
-重新验证：
+重新验证。`test -x` 通过退出状态判断两个目标文件是否可执行，完整条件骨架见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 ```bash
 printf 'JAVA_HOME=%s\n' "$JAVA_HOME"

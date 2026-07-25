@@ -11,7 +11,7 @@ tags:
   - Go/Linux
   - Go/Ubuntu
 created: 2026-07-16T00:31:00
-updated: 2026-07-17T01:12:07
+updated: 2026-07-25T14:29:00
 ---
 
 本文用于在 Ubuntu 上安装 Go 官方工具链，覆盖项目版本约束、CPU 架构、官方下载与 SHA-256 校验、安全切换、PATH、验证、升级、回滚和排障。
@@ -88,6 +88,8 @@ printf 'go_arch=%s\n' "$GO_ARCH"
 如果出现 `Exec format error`，通常是下载架构与客户机架构不匹配，而不是 Go 源码错误。
 
 ## 3. 从项目声明确定目标版本
+
+先用 `test -f` 确认当前目录中的 `go.mod` 是普通文件，再读取版本声明；`test` 的路径条件与退出状态见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 **执行位置：Ubuntu 主机（Go 项目根目录）**
 

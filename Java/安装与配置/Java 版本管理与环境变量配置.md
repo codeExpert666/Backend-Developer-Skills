@@ -10,7 +10,7 @@ tags:
   - Java/环境变量
   - Maven/Toolchains
 created: 2026-07-14T23:30:24
-updated: 2026-07-14T23:42:04
+updated: 2026-07-25T14:29:00
 ---
 
 一台开发机可以同时安装多个 JDK，但在某个具体进程中，最终只能选择一个 Java 运行时。版本管理的核心不是“安装了多少个 JDK”，而是明确终端、Maven、IDE、CI 和应用服务各自选择了哪一个 JDK，以及项目如何把这一选择记录下来。
@@ -68,7 +68,7 @@ java -XshowSettings:properties -version 2>&1 \
 <JAVA_HOME>/bin/jar
 ```
 
-可以用通用检查确认：
+可以用通用检查确认。这里的 `test -n` 判断变量值非空，`test -x` 判断目标文件可执行；条件命令见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 ```bash
 test -n "${JAVA_HOME:-}"

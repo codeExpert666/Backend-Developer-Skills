@@ -11,12 +11,12 @@ tags:
   - Tailscale
   - SSH
 created: 2026-07-16T00:28:30
-updated: 2026-07-20T23:40:53
+updated: 2026-07-23T23:20:05
 ---
 
 Tailscale 基于 WireGuard 建立受身份和访问策略控制的覆盖网络，使不同局域网或 NAT 后的设备可以互相到达。本篇采用清晰主线：**Tailscale 只解决网络可达性，登录仍使用传统 OpenSSH**。
 
-Tailscale 是远程访问扩展，不替代同一局域网内的 SSH，也不替代 `sshd`、主机防火墙、Linux 用户权限、主机指纹和用户密钥。应先独立完成 [[OpenSSH 连接、密钥与主机指纹]]，并理解 [[Linux 主机防火墙与 UFW 基础]]，再引入 Tailscale。
+Tailscale 是远程访问扩展，不替代同一局域网内的 SSH，也不替代 `sshd`、主机防火墙、Linux 用户权限、主机指纹和用户密钥。应先按 [[OpenSSH 密钥登录、服务端配置与排查]] 理解连接边界并独立完成密钥登录，再理解 [[Linux 主机防火墙与 UFW 基础]]，最后引入 Tailscale。
 
 > [!info] 核对日期
 > 本文于 **2026-07-17** 核对 Tailscale 官方文档。客户端安装界面、访问控制语法和产品能力可能变化，启用前应重新查看当前官方文档与所在 tailnet 的策略。
@@ -85,7 +85,7 @@ command -v ssh
 command -v tailscale || true
 ```
 
-如果传统 SSH 本身失败，应先修复 [[OpenSSH 连接、密钥与主机指纹]] 中对应层次，不要用 Tailscale 掩盖服务端问题。应从 OpenSSH 有效配置确认端口，再在 `ss` 输出中匹配对应的 `Local Address:Port`；使用 `ssh.socket` 时，监听进程可能显示为 `systemd`，因此不要只执行 `grep sshd`，详见 [[Linux 端口、监听套接字与 ss 命令基础#7. 在 SSH 排查中怎样使用]]。
+如果传统 SSH 本身失败，应先修复 [[OpenSSH 密钥登录、服务端配置与排查]] 中对应层次，不要用 Tailscale 掩盖服务端问题。应从 OpenSSH 有效配置确认端口，再在 `ss` 输出中匹配对应的 `Local Address:Port`；使用 `ssh.socket` 时，监听进程可能显示为 `systemd`，因此不要只执行 `grep sshd`，详见 [[Linux 端口、监听套接字与 ss 命令基础#7. 在 SSH 排查中怎样使用]]。
 
 ## 5. 在 Linux 主机安装 Tailscale
 
@@ -199,7 +199,7 @@ ssh "$SSH_USER@$TS_HOST"
 3. 使用注释标识来源。
 4. 某客户端丢失时，只撤销该节点和对应公钥。
 
-具体生成、登记和验证步骤见 [[OpenSSH 连接、密钥与主机指纹]]。
+具体生成、登记和验证步骤见 [[OpenSSH 密钥登录、服务端配置与排查]]。
 
 ## 9. 使用独立 SSH 别名
 

@@ -9,7 +9,7 @@ tags:
   - Java/macOS
   - Maven
 created: 2026-07-14T23:30:24
-updated: 2026-07-14T23:42:04
+updated: 2026-07-25T14:29:00
 ---
 
 本文用于在 macOS 上从零安装 JDK 和 Apache Maven，并完成 `JAVA_HOME`、Zsh 与真实构建验证。内容同时覆盖 Apple Silicon 和 Intel Mac，主线提供 Eclipse Temurin 安装包与 Homebrew 两种方式。
@@ -159,7 +159,7 @@ grep -nE 'JAVA_HOME|openjdk|JavaVirtualMachines' \
   "$HOME/.zshrc" "$HOME/.zprofile" 2>/dev/null || true
 ```
 
-验证当前选择：
+验证当前选择。`test -x` 通过退出状态判断两个目标文件是否可执行，完整条件骨架见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 ```bash
 printf 'JAVA_HOME=%s\n' "$JAVA_HOME"

@@ -10,7 +10,7 @@ tags:
   - systemctl
   - journalctl
 created: 2026-07-17T00:48:00
-updated: 2026-07-20T00:49:15
+updated: 2026-07-23T00:57:42
 ---
 
 本文介绍 systemd、unit、service、启动状态和 journal 日志的基础使用。目标是能回答“服务是否运行、为什么失败、是否会开机启动、配置从哪里加载”，而不是遇到问题就反复 `restart`。
@@ -59,7 +59,7 @@ systemctl is-enabled ssh.socket
 systemctl status ssh.socket ssh.service --no-pager
 ```
 
-Ubuntu 的 OpenSSH 可能由 `ssh.socket` 监听并按需激活 `ssh.service`，因此 service 显示 inactive 或 disabled 时，SSH 入口仍可能正常；这里同时查看两个 unit，不能只凭 service 一项下结论。具体机制见 [[OpenSSH 连接、密钥与主机指纹#3. 在服务端准备 sshd]]。
+Ubuntu 的 OpenSSH 可能由 `ssh.socket` 监听并按需激活 `ssh.service`，因此 service 显示 inactive 或 disabled 时，SSH 入口仍可能正常；这里同时查看两个 unit，不能只凭 service 一项下结论。具体机制见 [[OpenSSH 密钥登录、服务端配置与排查#2. 在服务端准备 sshd]]。
 
 列出本次系统中的失败 unit：
 
@@ -350,7 +350,7 @@ systemctl show "$SERVICE_NAME.service" \
 ## 相关笔记
 
 - [[Ubuntu Server 初始化与基础安全]]
-- [[OpenSSH 连接、密钥与主机指纹]]
+- [[OpenSSH 密钥登录、服务端配置与排查]]
 - [[EventHub 六阶段工程化实践路线图]]
 
 ## 官方参考资料
