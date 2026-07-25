@@ -11,7 +11,7 @@ tags:
   - Linux/安全
   - Ubuntu
 created: 2026-07-16T00:31:57
-updated: 2026-07-25T14:29:00
+updated: 2026-07-25T15:56:55
 ---
 
 本文给出一台新装 Ubuntu Server 的通用初始化顺序：先保留控制台恢复入口，再核对身份、主机名、时区、网络、DNS、时间和软件包，最后核对或建立 OpenSSH 入口、UFW 与服务基线。
@@ -482,7 +482,7 @@ stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
 
 ### `sshd -t` 提示 `Missing privilege separation directory: /run/sshd`
 
-这通常需要先区分“配置语法错误”和“绕过 systemd 后运行时目录尚未创建”。按 [[OpenSSH 密钥登录、服务端配置与排查#sshd -t 提示缺少 /run/sshd]] 核对单元机制、启动前检查和服务日志，不要把手工创建目录当作持久修复。
+这通常需要先区分“配置语法错误”和“绕过 systemd 后运行时目录尚未创建”。按 [[OpenSSH 常用命令基础#5.4 sshd -t 提示缺少 /run/sshd]] 核对单元机制、启动前检查和服务日志，不要把手工创建目录当作持久修复。
 
 ### UFW 启用后 SSH 超时
 

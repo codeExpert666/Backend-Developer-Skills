@@ -17,21 +17,21 @@ tags:
   - SSH
   - OpenSSH
 created: 2026-07-16T00:28:30
-updated: 2026-07-25T14:29:00
+updated: 2026-07-25T16:22:15
 ---
 
 SSH 是一套加密远程访问协议，OpenSSH 是其常用实现，通常由客户端 `ssh` 与服务端 `sshd` 配合工作。本篇以传统公钥登录为主线，完成服务端准备、网络入口核对、主机指纹验证、用户密钥登记、客户端配置、认证收紧和故障排查。
 
-本篇只解释会直接影响操作与排障的原理，不要求先掌握密码学或 SSH 协议消息。客户端 `ssh` 的通用命令骨架见 [[SSH 客户端命令基础]]；软件包、服务、网络、防火墙和权限分别由 [[APT 软件包管理基础]]、[[systemd 服务与日志基础]]、[[Linux 网络接口、IP 地址、路由与 DNS 基础]]、[[Linux 主机防火墙与 UFW 基础]] 与 [[Linux 用户、用户组、sudo 与文件权限]] 负责。
+本篇只保留完成操作所需的最小原理、执行顺序、成功判据和恢复边界，不在流程中逐项讲解命令。`ssh`、`ssh-keygen`、`ssh-keyscan` 与 `sshd` 见 [[OpenSSH 常用命令基础]]；软件包、服务、网络、防火墙和权限分别由 [[APT 软件包管理基础]]、[[systemd 服务与日志基础]]、[[Linux 网络接口、IP 地址、路由与 DNS 基础]]、[[Linux 主机防火墙与 UFW 基础]] 与 [[Linux 用户、用户组、sudo 与文件权限]] 负责。
 
 > [!info] 核对日期
-> 本文于 **2026-07-19** 核对 Ubuntu Server 与 OpenBSD OpenSSH 手册，于 **2026-07-20** 核对 iproute2 的 `ss(8)`、OpenBSD 与 Ubuntu 的 `nc(1)` 手册，并于 **2026-07-21** 补充核对 OpenBSD 的 `ssh-keyscan(1)` 手册。修改认证策略前，应以目标主机和客户端上的 `man sshd_config`、`man ss`、`man nc` 及由 systemd 管理的实际服务状态为最终依据。
+> 本文于 **2026-07-25** 核对 Ubuntu Server 的 OpenSSH 配置流程与 Ubuntu 24.04 的 systemd socket activation。具体命令以 [[OpenSSH 常用命令基础]] 及目标主机上的实际手册为准；修改认证策略前，还必须核对由 systemd 管理的实际服务状态。
 
 ## 本篇掌握目标
 
 - **必须熟练**：能区分主机身份与用户登录权限、`known_hosts` 与 `authorized_keys`；能安全完成主机指纹核对、用户公钥登记和独立新会话验证。
-- **理解会查**：能读取 `sshd -T`、`systemctl`、`ss`、`nc`、`ssh -G` 与 `ssh -vvv` 的关键信息，并按网络、主机身份、用户认证与远程会话的层次定位问题。
-- **认识即可**：知道 SSH 会自动协商算法并为当前连接建立加密通道；知道 `ssh-keyscan` 只负责收集主机公钥；能看出认证收紧脚本的备份、校验、重载与失败回滚顺序。
+- **理解会查**：能根据服务状态、有效端口、监听结果、客户端探测和认证现象选择下一层检查，并按网络、主机身份、用户认证与远程会话的层次定位问题。
+- **认识即可**：知道 SSH 会自动协商算法并为当前连接建立加密通道；能看出认证收紧脚本的备份、校验、重载与失败回滚顺序。
 
 ## 1. 先建立够用的 SSH 连接模型
 
@@ -115,9 +115,9 @@ sudo ss -lntp
 )
 ```
 
-本文核对的 Ubuntu 24.04 `ssh.service` 会通过 `RuntimeDirectory=sshd` 让 systemd 在启动时创建 `/run/sshd`，再由 `ExecStartPre=/usr/sbin/sshd -t` 检查配置。服务未运行时，`systemctl start` 成功就表明启动前配置检查已经通过；服务已运行时，它的运行时目录已经存在，可直接使用 `sshd -t` 检查当前配置。`systemctl start` 只改变当前运行状态，不会将 `ssh.service` 设为开机启用；下次启动仍可由已启用的 `ssh.socket` 按需激活。
+预期 `ssh.socket` 处于 `active (listening)`，执行上述检查后，`ssh.service` 处于 `active (running)`。同时确认有效配置中存在明确端口，并在 `ss` 输出中找到对应监听套接字；任一检查失败都先停止，不继续尝试客户端连接。`sshd` 检查模式、systemd 运行时目录和 socket activation 的边界见 [[OpenSSH 常用命令基础#5. 使用 sshd 检查服务端配置]] 与 [[systemd 服务与日志基础]]。
 
-预期 `ssh.socket` 处于 `active (listening)`，执行上述检查后，`ssh.service` 处于 `active (running)`。先使用 `sshd -T` 确认实际生效的端口，再在 `ss` 输出中查找对应的监听套接字。新安装的默认端口通常是 22，但不要将它视为所有主机的固定值。上述检查在 Ubuntu Server 控制台执行，此时尚未建立 SSH 会话，也不需要停止服务。后续若通过 SSH 远程维护，应先确认控制台或其他独立管理入口可用；如果当前 SSH 会话是唯一可用入口，不要停止 `ssh.service`，以免会话中断后无法重新连接。
+上述步骤在 Ubuntu Server 控制台执行，此时不需要停止服务。后续若通过 SSH 远程维护，应先确认控制台或其他独立管理入口可用；如果当前 SSH 会话是唯一可用入口，不要停止 `ssh.service`，以免会话中断后无法重新连接。
 
 服务端查看当前有效配置：
 
@@ -127,21 +127,9 @@ sudo ss -lntp
 sudo sshd -T | grep -E '^(port|listenaddress|pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication|permitrootlogin) '
 ```
 
-`sshd -T` 比只阅读某一个配置文件可靠，因为 Ubuntu 可能通过 `Include` 加载 `/etc/ssh/sshd_config.d/*.conf`。
+确认输出中的端口、监听地址和认证策略符合预期；命令模式与 `Include` 解析见 [[OpenSSH 常用命令基础#5.1 区分 sshd -t 与 sshd -T]]。
 
 监听状态与主机防火墙是不同层次：`sshd` 或 `ssh.socket` 正常监听，不代表 UFW 已允许外部连接；UFW 允许端口，也不代表 SSH 主机指纹或用户认证正确。启用防火墙前应同时比较有效配置、`ss` 实际监听和 UFW 规则，详见 [[Linux 主机防火墙与 UFW 基础#6. 先比较 SSH 配置、监听状态与 UFW profile]]。
-
-### 2.1 怎样阅读 `sudo ss -lntp`
-
-`ss` 读取 Linux 内核当前的套接字状态。这里的组合短选项可以拆成 `-l`（只看监听套接字）、`-n`（保留数字地址和端口）、`-t`（只看 TCP）与 `-p`（显示持有套接字的进程）。`sudo` 用于尽量完整地读取其他用户的进程信息；这条命令本身只读取状态，不会启动服务或修改网络。
-
-阅读输出时先看三处：
-
-1. `State` 是否为 `LISTEN`。
-2. `Local Address:Port` 是否包含 `sshd -T` 显示的有效端口，以及它绑定的是回环地址、某个具体地址还是所有本地地址。
-3. `Process` 由谁持有。Ubuntu 使用 `ssh.socket` 时可能显示 `systemd`，因此不能只搜索 `sshd` 进程名。
-
-`0.0.0.0:22` 表示示例端口绑定所有本地 IPv4 地址，`127.0.0.1:22` 只允许从本机 IPv4 回环入口访问；`[::]:22` 是 IPv6 通配绑定，不能脱离系统的 IPv4/IPv6 套接字设置推断它是否也接收 IPv4。端口以当前 `sshd -T` 输出为准。端口、监听地址、输出字段和其他 `ss` 骨架详见 [[Linux 端口、监听套接字与 ss 命令基础]]。
 
 ## 3. 取得地址并验证端口
 
@@ -173,13 +161,7 @@ nc -vz -w 5 "$SSH_HOST" 22
 )
 ```
 
-### 3.1 怎样阅读 `nc -vz -w 5 "$SSH_HOST" 22`
-
-`nc` 又称 Netcat，这里从实际 SSH 客户端尝试连接目标 TCP 端口。`-v` 输出详细结果，`-z` 只做连接探测而不发送 SSH 应用数据，`-w 5` 将本文核对实现的等待限制为 5 秒；`"$SSH_HOST"` 是前面已经校验的目标名称或地址，`22` 是本次测试的 TCP 目标端口。这条命令不需要 `sudo`，也不会修改服务端配置或防火墙，但会实际产生一次网络连接尝试。
-
-连接成功只表示从当前客户端到本次解析得到的目标地址和 TCP 端口完成了连接，不能证明对端一定是 OpenSSH、主机指纹可信或用户密钥有效。明确拒绝常见于没有监听入口、绑定地址不匹配或某层主动拒绝；超时可能涉及地址、路由、丢弃型防火墙、上游策略或目标离线。客户端现象只能提供排查方向，不能单独锁定根因，详见 [[TCP 端口连通性测试与 nc 命令基础]]。
-
-如果服务端不是 22 端口，应从可信配置中取得实际端口，并在 `nc` 与 `ssh -p` 中显式指定。不同 Netcat 实现的低频选项可能不同，应在实际客户端使用 `command -V nc`、`nc -h` 和 `man nc` 核对。
+以上代码以 TCP 22 为例。只有当前客户端到已经核对的实际 SSH 端口明确连接成功，才继续核对主机身份；成功不能证明对端一定是 OpenSSH、主机指纹可信或用户密钥有效。明确拒绝、超时和不同 `nc` 实现的处理见 [[TCP 端口连通性测试与 nc 命令基础]]；如果 `sshd -T` 显示的实际端口不是 22，应在 `nc` 与后续 `ssh -p` 中使用同一个端口。
 
 ## 4. 首次连接前独立核对主机指纹
 
@@ -195,7 +177,7 @@ nc -vz -w 5 "$SSH_HOST" 22
 sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-`ssh-keygen` 不仅能生成密钥，也能查看已有密钥的信息。这里的 `-l` 表示显示指纹，`-f` 指定要读取的文件，两者合写为 `-lf`。这条命令只读取公钥，不会生成或修改密钥；`sudo` 只用于以系统权限读取 `/etc/ssh` 中的文件，与使用 `sudo ssh-keygen` 为普通用户创建密钥不是一回事。典型输出会包含密钥位数、`SHA256:...` 指纹、注释和末尾的 `(ED25519)` 类型，人工比较时重点核对指纹和密钥类型。
+记录输出中的 `SHA256:...` 指纹和 `ED25519` 类型；这一步只读取服务端主机公钥。`ssh-keygen` 的读取模式与输出字段见 [[OpenSSH 常用命令基础#3.2 读取公钥指纹]]。
 
 再从客户端发起首次连接：
 
@@ -223,31 +205,15 @@ ssh "$SSH_USER@$SSH_HOST"
 )
 ```
 
-客户端首次连接提示会同时显示主机密钥类型和指纹。只有提示类型为 `ED25519` 时，才能将它的 `SHA256:...` 指纹与上述结果比较；如果提示的是 RSA 或 ECDSA，应改为读取对应的 `/etc/ssh/ssh_host_rsa_key.pub` 或 `/etc/ssh/ssh_host_ecdsa_key.pub`，不能跨类型比较。类型与指纹都一致后才接受，接受的主机公钥会写入客户端 `~/.ssh/known_hosts`。
+客户端首次连接提示会同时显示主机密钥类型和指纹。只有提示类型为 `ED25519` 时，才能将它的 `SHA256:...` 指纹与上述结果比较；如果提示的是 RSA 或 ECDSA，应改为读取对应的服务端主机公钥，不能跨类型比较。类型与指纹都一致后才接受，接受的主机公钥会写入客户端 `~/.ssh/known_hosts`。连接命令的执行边界见 [[OpenSSH 常用命令基础#2.2 怎样阅读 ssh "$SSH_USER@$SSH_HOST"]]。
 
-### 4.1 怎样阅读 `ssh "$SSH_USER@$SSH_HOST"`
-
-`ssh` 是运行在当前客户端上的 OpenSSH 客户端命令，常用骨架是 `ssh [选项] [远程用户@]目标主机 [远程命令]`。这里本地 Shell 会把双引号中的变量展开成一个类似 `linux-user@server.example.com` 的目标参数；`@` 前是远程 Linux 用户名，后面是主机名或地址。由于没有提供远程命令，认证成功后会进入交互式远程 Shell。
-
-这条命令不需要 `sudo`，它会读取当前客户端用户的 `~/.ssh/config`、`~/.ssh/known_hosts`、身份文件和 SSH Agent。公钥认证只在客户端使用私钥完成签名，不会把私钥发送到服务端；使用 `exit` 或 `Ctrl-D` 可以结束远程 Shell 并返回本地终端。交互式登录、远程命令、标准输入和常用选项详见 [[SSH 客户端命令基础]]。
-
-### 4.2 `ssh-keyscan`：只收集主机公钥，不验证主机身份（认识即可）
-
-`ssh-keyscan` 是 OpenSSH 提供的主机公钥收集工具，常用于为多台已知主机收集可供 `known_hosts` 使用的记录。它不是本文首次连接主线的必需命令；在批量准备或核对主机公钥时，可能会看到如下命令骨架：
-
-```text
-ssh-keyscan [-T 超时秒数] [-p SSH端口] [-t 密钥类型] 目标主机
-```
-
-`-T` 指定连接或读取等待超时，`-p` 指定目标 SSH 端口，`-t` 限定要收集的主机密钥类型，例如 `ed25519`。默认输出包含主机名、密钥类型和公钥，可作为 `known_hosts` 记录的格式来源，但不代表这些公钥已经通过可信通道验证。
-
-`ssh-keyscan` 只能收集当前网络响应者提供的公钥，不能独立证明响应者就是预期主机。如果攻击者能够拦截网络流量，就可能用自己的主机公钥替换真实结果。因此，未经控制台或其他可信通道核对的输出，不应直接作为可信记录写入 `~/.ssh/known_hosts`。
+不要把同一网络路径上的 `ssh-keyscan` 输出当作独立可信依据；它的用途和信任边界见 [[OpenSSH 常用命令基础#4. 使用 ssh-keyscan 收集主机公钥（认识即可）]]。
 
 ## 5. 创建独立的用户密钥
 
 这里创建的是客户端用户密钥，不是服务端主机密钥。登录 Linux 主机与访问 GitHub、GitLab 等代码平台属于不同授权场景，建议按用途使用独立密钥；Git SSH 详见 [[Git 凭据、SSH 与常见问题排查]]。
 
-先选择用途明确的路径并避免覆盖。下面的 `test -e ... || test -L ...` 会把悬空符号链接也视为路径已占用，避免 `ssh-keygen` 写入任何已有目录项；条件检查与符号链接边界见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
+先选择用途明确的路径并避免覆盖。下面的代码块只在私钥路径和 `.pub` 路径都未被文件、目录或符号链接占用时继续；任一路径已存在都停止，由使用者核对后另选名称。路径占用判断由 `test` 完成，相关语法与符号链接边界见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 **执行位置：SSH 客户端（任意目录）**
 
@@ -276,9 +242,7 @@ fi
 )
 ```
 
-最外层圆括号让路径冲突时的 `exit` 只停止这个代码块，不会结束当前客户端登录 Shell。
-
-建议为私钥设置口令。`-a 64` 增加私钥口令派生轮次。生成与保存过程不会把私钥发给服务端；后续登记时传输公钥，认证时传输公钥和由私钥生成的签名。
+成功后应同时得到私钥和同名 `.pub` 公钥，并能读取公钥指纹。为私钥设置口令，只保留在可信客户端；创建模式、参数和文件影响见 [[OpenSSH 常用命令基础#3.1 创建用户密钥]]。
 
 ## 6. 将公钥加入 authorized_keys
 
@@ -317,7 +281,7 @@ ssh "$SSH_USER@$SSH_HOST" \
 )
 ```
 
-目标参数后的单引号字符串是远程命令：单引号阻止本地 Shell 展开其中的 `$HOME`，远端 Shell 收到后再按远端用户家目录解释。`< "$KEY_PATH.pub"` 由本地 Shell 处理，只把本地公钥内容送入 `ssh` 的标准输入，再由远端 `cat` 追加到 `authorized_keys`；对应私钥没有被传输。这一步需要密码或其他已经可用的认证方式，命令边界详见 [[SSH 客户端命令基础#4. 交互式登录与单次远程命令]]。
+这一步需要密码或其他已经可用的认证方式。成功时只把本地公钥追加到目标用户的 `authorized_keys`，对应私钥不会离开客户端；远程命令和标准输入的执行边界见 [[OpenSSH 常用命令基础#2.3 交互式登录与单次远程命令]] 与 [[OpenSSH 常用命令基础#2.4 标准输入、输出与退出状态]]。
 
 随后在服务端核对：
 
@@ -367,7 +331,7 @@ ssh -o IdentitiesOnly=yes -i "$KEY_PATH" "$SSH_USER@$SSH_HOST"
 )
 ```
 
-`-i "$KEY_PATH"` 指定本次公钥认证使用的身份文件；`-o` 临时提供一个客户端配置项，`IdentitiesOnly=yes` 限制候选身份，避免 SSH Agent 中其他密钥干扰。这些选项只控制客户端如何选择身份，不会把私钥传给服务端，详见 [[SSH 客户端命令基础#6. 高频选项按问题记忆]]。
+成功时应使用指定密钥建立一个新的独立会话；失败时保持原有会话和控制台可用，不要继续收紧认证。身份选择与候选密钥范围见 [[OpenSSH 常用命令基础#2.5 高频选项按问题记忆]]。
 
 登录后验证身份和连接：
 
@@ -385,7 +349,7 @@ pwd
 
 ## 8. 使用客户端 ~/.ssh/config
 
-客户端配置把动态地址、用户名和密钥路径集中在一个别名下。通用骨架与配置读取边界见 [[SSH 客户端命令基础#7. 使用 ~/.ssh/config 别名]]；以下是本次登录流程使用的结构示例，`HostName` 和 `User` 必须替换为实际值：
+客户端配置把动态地址、用户名和密钥路径集中在一个别名下。以下是本次登录流程使用的结构示例，`HostName` 和 `User` 必须替换为实际值；字段和配置读取边界见 [[OpenSSH 常用命令基础#2.6 使用 ~/.ssh/config 别名]]。
 
 ```sshconfig
 Host linux-host
@@ -408,11 +372,11 @@ ssh -G linux-host | grep -E '^(hostname|user|identityfile|identitiesonly) '
 ssh linux-host
 ```
 
-`ssh -G` 显示合并后的客户端配置，适合排查多个 `Host` 块、通配符和 `Include` 的优先级。别名稳定而地址可变时，只需更新 `HostName`。
+确认输出中的 `hostname`、`user`、`identityfile` 和 `identitiesonly` 都符合预期后，再使用别名连接。别名稳定而地址可变时，只需更新 `HostName`。
 
 ## 9. Fail-closed 收紧服务端认证
 
-本节使用的 `if`、函数、`trap`、重定向和退出状态见 [[Shell 脚本阅读基础]] 与 [[Shell 标准流、管道、重定向与退出状态]]。这里应把整段当作一个有前置条件和回滚的完整操作，不要抽出中间命令单独执行。
+这里应把整段当作一个有前置条件和回滚的完整操作，不要抽出中间命令单独执行。Shell 控制结构见 [[Shell 脚本阅读基础]] 与 [[Shell 标准流、管道、重定向与退出状态]]，服务端检查与 reload 边界见 [[OpenSSH 常用命令基础#5.3 检查配置不等于让配置生效]]。
 
 只有满足以下条件后，才考虑关闭密码登录：
 
@@ -421,7 +385,7 @@ ssh linux-host
 - 已确认正确 Linux 用户拥有可用公钥。
 - 当前旧会话保持打开。
 
-以下脚本使用独立配置片段，先备份，再校验语法与有效值；任一步失败都会尝试恢复原状态。整段由最外层圆括号放进一个子 Shell，所以其中的 `trap` 和 `exit` 不会残留或结束当前登录 Shell：
+以下脚本使用独立配置片段，先备份，再校验语法与有效值；任一步失败都会尝试恢复原状态。必须从第一行到最后一行完整执行：
 
 此时至少一个 SSH 会话已经通过验证，`ssh.service` 正在运行且它的运行时目录已经存在，因此脚本可以直接使用 `sshd -t` 和 `sshd -T`。
 
@@ -642,7 +606,7 @@ ssh-keygen -R "$SSH_HOST"
 )
 ```
 
-下次连接时重新比较新指纹。不要删除整个 `known_hosts`。
+代码块先创建独立备份，再显示并移除这个目标的旧记录。确认备份路径已经输出后，下次连接重新比较新指纹；不要删除整个 `known_hosts`。查询与移除模式见 [[OpenSSH 常用命令基础#3.3 查询和移除 known_hosts 记录]]。
 
 ## 11. 排查顺序
 
@@ -663,7 +627,7 @@ ssh-keygen -R "$SSH_HOST"
 ssh -vvv linux-host
 ```
 
-三个 `-v` 将客户端调试信息提高到最详细的常规级别，并实际尝试连接；输出可能包含用户名、地址、配置路径和公钥指纹，分享前应脱敏。调试选项与排查顺序见 [[SSH 客户端命令基础#9. 按顺序排查和自助查询]]。
+该命令会实际尝试连接，输出可能包含用户名、地址、配置路径和公钥指纹，分享前应脱敏；客户端排查顺序见 [[OpenSSH 常用命令基础#2.8 按顺序排查]]。
 
 ### 服务端配置与启动检查
 
@@ -691,9 +655,7 @@ sudo journalctl -u ssh.service -b -n 100 --no-pager
 sudo sshd -T | grep -E '^(port|pubkeyauthentication|passwordauthentication|permitrootlogin) '
 ```
 
-### `sshd -t` 提示缺少 `/run/sshd`
-
-如果在 `ssh.service` 尚未启动时直接执行 `sudo sshd -t`，可能看到 `Missing privilege separation directory: /run/sshd`。这表示手工命令绕过了负责创建 `RuntimeDirectory` 的 systemd 单元，不足以证明 `sshd_config` 存在语法错误。应先按上述顺序启动服务并查看日志，不要在未核对软件包机制前自行添加 tmpfiles 规则或将手工建目录当作持久修复。
+若检查提示缺少 `/run/sshd`，按 [[OpenSSH 常用命令基础#5.4 sshd -t 提示缺少 /run/sshd]] 核对 systemd 运行时目录，不要直接手工创建目录或添加未经确认的 tmpfiles 规则。
 
 ## 完成检查
 
@@ -702,14 +664,12 @@ sudo sshd -T | grep -E '^(port|pubkeyauthentication|passwordauthentication|permi
 - [ ] 服务端启动前配置检查通过，SSH socket 或服务正常监听。
 - [ ] 已根据 `sshd -T`、`ss` 和实际客户端探测确认有效地址与端口。
 - [ ] 首次连接前通过独立可信通道核对了主机指纹。
-- [ ] 知道 `ssh-keyscan` 收集的主机公钥仍需通过可信通道核对。
-- [ ] 能读懂 `ssh [选项] [用户@]主机 [远程命令]`，并区分交互式登录与单次远程命令。
 - [ ] 用户公钥位于正确目标用户的 `authorized_keys`，对应私钥没有被传输。
 - [ ] 新开终端可以独立使用密钥登录。
 - [ ] `~/.ssh/config` 的别名可通过 `ssh -G` 核对。
 - [ ] 收紧认证时保留了控制台、旧会话、备份和回滚路径。
 - [ ] 能区分 SSH 监听、UFW 放行和用户认证三个层次。
-- [ ] 能解释 `nc` 探测成功只证明当前 TCP 连接成立，不能代替 SSH 身份验证。
+- [ ] 客户端 TCP 探测成功后，仍独立完成了主机身份与用户身份验证。
 - [ ] 遇到连接或认证失败时，能按地址、端口、主机身份、用户认证、会话创建的顺序排查。
 
 ## 官方参考资料
@@ -718,12 +678,4 @@ sudo sshd -T | grep -E '^(port|pubkeyauthentication|passwordauthentication|permi
 - [Ubuntu 24.04 LTS 发布说明：OpenSSH 的 systemd socket activation](https://documentation.ubuntu.com/release-notes/24.04/#openssh)
 - [IETF RFC 4252：SSH 用户认证协议](https://www.rfc-editor.org/rfc/rfc4252)
 - [IETF RFC 4253：SSH 传输层协议](https://www.rfc-editor.org/rfc/rfc4253)
-- [OpenBSD：ssh 客户端手册](https://man.openbsd.org/ssh.1)
-- [OpenBSD：sshd 服务端手册](https://man.openbsd.org/sshd.8)
-- [OpenBSD：ssh-keygen 手册](https://man.openbsd.org/ssh-keygen.1)
-- [OpenBSD：ssh-keyscan 手册](https://man.openbsd.org/ssh-keyscan.1)
-- [OpenBSD：ssh_config 手册](https://man.openbsd.org/ssh_config)
 - [OpenBSD：sshd_config 手册](https://man.openbsd.org/sshd_config)
-- [iproute2：`ss(8)` 手册](https://man7.org/linux/man-pages/man8/ss.8.html)
-- [OpenBSD：`nc(1)` 手册](https://man.openbsd.org/nc.1)
-- [Ubuntu 24.04：`netcat-openbsd` 提供的 `nc(1)` 手册](https://manpages.ubuntu.com/manpages/noble/man1/nc_openbsd.1.html)
