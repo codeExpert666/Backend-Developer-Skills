@@ -6,14 +6,14 @@ aliases:
   - Linux EventHub 首次构建
   - EventHub Go 与 Java Linux 验证
 tags:
-  - 工程实践
-  - 工程实践/EventHub
+  - 项目实践
+  - 项目实践/EventHub
   - EventHub/工程化第1阶段
   - Go/构建
   - Java/Maven
   - Docker/验证
 created: 2026-07-16T00:29:35
-updated: 2026-07-26T22:44:42
+updated: 2026-07-26T23:28:30
 ---
 
 本文负责把 EventHub Go 与 Java 仓库放入 Ubuntu 本地文件系统，并按迁移后 revision 的真实工程入口完成首次构建、测试和质量门禁。

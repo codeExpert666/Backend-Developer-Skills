@@ -1,14 +1,14 @@
 ---
-title: EventHub 工程实践总览
+title: EventHub 项目实践总览
 aliases:
-  - EventHub 项目实践总览
+  - EventHub 工程实践总览
   - EventHub 实践路线索引
 tags:
-  - 工程实践
+  - 项目实践
   - EventHub
   - 路线图
 created: 2026-07-26T22:44:42
-updated: 2026-07-26T22:44:42
+updated: 2026-07-26T23:28:30
 ---
 
 本文是 EventHub Java 与 Go 两个后端项目在知识库中的项目级入口，负责区分业务开发、工程化交付和 AI 应用开发三条相关但不同的实践路线，并说明新笔记应归入哪个层级。
@@ -20,7 +20,7 @@ updated: 2026-07-26T22:44:42
 - Java `eventhub` 项目先验证业务语义和主要实现方案。
 - Go `eventhub-go` 项目复刻相同产品语义，但内部实现遵循 Go idiom。
 - 传统后端业务阶段以代码仓库中的业务 roadmap、接口契约、迁移和测试为事实来源，知识库不维护第二份容易漂移的业务进度表。
-- Linux、Java、Go、Docker、Git、MySQL 和 AI 等跨项目知识继续保存在对应主题目录；`工程实践/EventHub/` 只记录这些能力如何在 EventHub 中组合、落地和验收。
+- Linux、Java、Go、Docker、Git、MySQL 和 AI 等跨项目知识继续保存在对应主题目录；`项目实践/EventHub/` 只记录这些能力如何在 EventHub 中组合、落地和验收。
 
 ## 三条实践路线
 
@@ -34,7 +34,7 @@ updated: 2026-07-26T22:44:42
 
 ```mermaid
 flowchart TD
-    O["EventHub 工程实践总览"] --> B["传统后端业务开发<br/>代码仓库 roadmap"]
+    O["EventHub 项目实践总览"] --> B["传统后端业务开发<br/>代码仓库 roadmap"]
     O --> E["工程化交付<br/>工程化第 1～6 阶段"]
     O --> A["EventHub AI 应用开发"]
     G["通用 AI 应用开发学习路线"] --> A

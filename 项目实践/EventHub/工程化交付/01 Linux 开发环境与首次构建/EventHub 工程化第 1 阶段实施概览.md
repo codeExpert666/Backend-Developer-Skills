@@ -7,12 +7,12 @@ aliases:
   - Ubuntu Server 开发虚拟机学习路线
   - EventHub Linux 首次构建路线
 tags:
-  - 工程实践
-  - 工程实践/EventHub
+  - 项目实践
+  - 项目实践/EventHub
   - EventHub/工程化第1阶段
   - Linux/开发环境
 created: 2026-07-16T00:28:30
-updated: 2026-07-26T22:44:42
+updated: 2026-07-26T23:28:30
 ---
 
 本文是 [[EventHub 工程化交付路线图]] 的工程化第 1 阶段入口。目标是在完整 Linux 开发机中复现两个 EventHub 仓库的工程入口，并为后续部署阶段建立可信、可恢复的环境基线。
