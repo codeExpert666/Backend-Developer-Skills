@@ -17,7 +17,7 @@ tags:
   - SSH
   - OpenSSH
 created: 2026-07-16T00:28:30
-updated: 2026-07-25T16:22:15
+updated: 2026-07-26T17:04:44
 ---
 
 SSH 是一套加密远程访问协议，OpenSSH 是其常用实现，通常由客户端 `ssh` 与服务端 `sshd` 配合工作。本篇以传统公钥登录为主线，完成服务端准备、网络入口核对、主机指纹验证、用户密钥登记、客户端配置、认证收紧和故障排查。
@@ -25,7 +25,7 @@ SSH 是一套加密远程访问协议，OpenSSH 是其常用实现，通常由�
 本篇只保留完成操作所需的最小原理、执行顺序、成功判据和恢复边界，不在流程中逐项讲解命令。`ssh`、`ssh-keygen`、`ssh-keyscan` 与 `sshd` 见 [[OpenSSH 常用命令基础]]；软件包、服务、网络、防火墙和权限分别由 [[APT 软件包管理基础]]、[[systemd 服务与日志基础]]、[[Linux 网络接口、IP 地址、路由与 DNS 基础]]、[[Linux 主机防火墙与 UFW 基础]] 与 [[Linux 用户、用户组、sudo 与文件权限]] 负责。
 
 > [!info] 核对日期
-> 本文于 **2026-07-25** 核对 Ubuntu Server 的 OpenSSH 配置流程与 Ubuntu 24.04 的 systemd socket activation。具体命令以 [[OpenSSH 常用命令基础]] 及目标主机上的实际手册为准；修改认证策略前，还必须核对由 systemd 管理的实际服务状态。
+> 本文于 **2026-07-26** 核对 Ubuntu Server 的 OpenSSH 配置流程与 Ubuntu 24.04 的 systemd socket activation。具体命令以 [[OpenSSH 常用命令基础]] 及目标主机上的实际手册为准；修改认证策略前，还必须核对由 systemd 管理的实际服务状态。
 
 ## 本篇掌握目标
 
@@ -124,10 +124,10 @@ sudo ss -lntp
 **执行位置：Ubuntu Server（控制台，任意目录）**
 
 ```bash
-sudo sshd -T | grep -E '^(port|listenaddress|pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication|permitrootlogin) '
+sudo sshd -T | grep -E '^(port|listenaddress|pubkeyauthentication|authorizedkeysfile|strictmodes|passwordauthentication|kbdinteractiveauthentication|permitrootlogin) '
 ```
 
-确认输出中的端口、监听地址和认证策略符合预期；命令模式与 `Include` 解析见 [[OpenSSH 常用命令基础#5.1 区分 sshd -t 与 sshd -T]]。
+确认端口、监听地址和各项认证配置符合预期。第 6 节会写入 `$HOME/.ssh/authorized_keys`，因此 `authorizedkeysfile` 必须包含 `.ssh/authorized_keys`；使用 `Match` 时，还要按实际连接上下文核对。详见 [[OpenSSH 常用命令基础#5.1 区分 sshd -t 与 sshd -T]] 与 [[OpenSSH 常用命令基础#5.2 Match 条件需要连接上下文]]。
 
 监听状态与主机防火墙是不同层次：`sshd` 或 `ssh.socket` 正常监听，不代表 UFW 已允许外部连接；UFW 允许端口，也不代表 SSH 主机指纹或用户认证正确。启用防火墙前应同时比较有效配置、`ss` 实际监听和 UFW 规则，详见 [[Linux 主机防火墙与 UFW 基础#6. 先比较 SSH 配置、监听状态与 UFW profile]]。
 
@@ -174,10 +174,12 @@ nc -vz -w 5 "$SSH_HOST" 22
 **执行位置：Linux 服务端（控制台，任意目录）**
 
 ```bash
-sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
 记录输出中的 `SHA256:...` 指纹和 `ED25519` 类型；这一步只读取服务端主机公钥。`ssh-keygen` 的读取模式与输出字段见 [[OpenSSH 常用命令基础#3.2 读取公钥指纹]]。
+
+如果命令提示 `.pub` 文件不存在，先不要继续首次连接。仅缺少公钥副本不等于对应主机私钥也缺失，也不能据此判断 `sshd` 一定无法连接；应先按 [[#服务端缺少可用主机密钥]] 区分实际状态，恢复可独立核对的参考指纹后再返回本节。
 
 再从客户端发起首次连接：
 
@@ -205,7 +207,7 @@ ssh "$SSH_USER@$SSH_HOST"
 )
 ```
 
-客户端首次连接提示会同时显示主机密钥类型和指纹。只有提示类型为 `ED25519` 时，才能将它的 `SHA256:...` 指纹与上述结果比较；如果提示的是 RSA 或 ECDSA，应改为读取对应的服务端主机公钥，不能跨类型比较。类型与指纹都一致后才接受，接受的主机公钥会写入客户端 `~/.ssh/known_hosts`。连接命令的执行边界见 [[OpenSSH 常用命令基础#2.2 怎样阅读 ssh "$SSH_USER@$SSH_HOST"]]。
+客户端首次连接提示会同时显示主机密钥类型和指纹。只有提示类型为 `ED25519` 时，才能将它的 `SHA256:...` 指纹与上述结果比较；如果提示的是 RSA 或 ECDSA，应改为读取对应的服务端主机公钥，不能跨类型比较。类型与指纹都一致后才接受，接受的主机公钥会写入客户端 `~/.ssh/known_hosts`。连接命令的执行边界见 [[OpenSSH 常用命令基础#2.3 本地 Shell、ssh 与远端 Shell 的边界]]。
 
 不要把同一网络路径上的 `ssh-keyscan` 输出当作独立可信依据；它的用途和信任边界见 [[OpenSSH 常用命令基础#4. 使用 ssh-keyscan 收集主机公钥（认识即可）]]。
 
@@ -246,7 +248,7 @@ fi
 
 ## 6. 将公钥加入 authorized_keys
 
-下面只通过标准输入发送公钥，并让远端以严格权限创建目录：
+下面先显示待登记公钥的指纹，再通过标准输入发送其内容。远端以目标用户身份设置目录和文件权限后追加公钥：
 
 **执行位置：SSH 客户端（任意目录）**
 
@@ -262,6 +264,10 @@ if ! test -f "$KEY_PATH.pub" || test -L "$KEY_PATH.pub"; then
   printf '停止：公钥不是预期的普通文件：%s\n' "$KEY_PATH.pub" >&2
   exit 1
 fi
+if ! public_key_info="$(ssh-keygen -lf "$KEY_PATH.pub")"; then
+  printf '停止：无法读取待登记公钥的指纹。\n' >&2
+  exit 1
+fi
 case "$SSH_USER" in
   ''|-*|*[!A-Za-z0-9_-]*)
     printf '%s\n' '停止：Linux 用户名格式不符合本文保护规则。' >&2
@@ -275,24 +281,41 @@ case "$SSH_HOST" in
     ;;
 esac
 
-ssh "$SSH_USER@$SSH_HOST" \
-  'umask 077; mkdir -p "$HOME/.ssh" && cat >> "$HOME/.ssh/authorized_keys"' \
-  < "$KEY_PATH.pub"
+printf '准备登记的客户端公钥：%s\n' "$public_key_info"
+if ! ssh "$SSH_USER@$SSH_HOST" \
+  'umask 077
+   mkdir -p "$HOME/.ssh" &&
+   chmod 700 "$HOME/.ssh" &&
+   touch "$HOME/.ssh/authorized_keys" &&
+   chmod 600 "$HOME/.ssh/authorized_keys" &&
+   cat >> "$HOME/.ssh/authorized_keys"' \
+  < "$KEY_PATH.pub"; then
+  printf '%s\n' '停止：公钥追加或远端权限设置失败。' >&2
+  exit 1
+fi
 )
 ```
 
-这一步需要密码或其他已经可用的认证方式。成功时只把本地公钥追加到目标用户的 `authorized_keys`，对应私钥不会离开客户端；远程命令和标准输入的执行边界见 [[OpenSSH 常用命令基础#2.3 交互式登录与单次远程命令]] 与 [[OpenSSH 常用命令基础#2.4 标准输入、输出与退出状态]]。
+这一步需要密码或其他已有认证方式。标准输入只发送公钥文件内容，私钥仍留在客户端。记下密钥类型和 `SHA256:...` 指纹，用于核对服务端记录。详见 [[OpenSSH 常用命令基础#2.3 本地 Shell、ssh 与远端 Shell 的边界]] 与 [[OpenSSH 常用命令基础#2.4 标准输入、输出与退出状态]]。
 
-随后在服务端核对：
+随后以目标用户核对账户、有效配置、权限和公钥指纹：
 
-**执行位置：Linux 服务端（当前登录用户家目录）**
+**执行位置：Linux 服务端（以刚才的目标登录用户执行，任意目录）**
 
 ```bash
-chmod 700 "$HOME/.ssh"
-chmod 600 "$HOME/.ssh/authorized_keys"
+id -un
+sudo sshd -T |
+  grep -E '^(pubkeyauthentication|authorizedkeysfile|strictmodes) '
 stat -c 'mode=%A owner=%U group=%G path=%n' \
-  "$HOME/.ssh" "$HOME/.ssh/authorized_keys"
+  "$HOME" "$HOME/.ssh" "$HOME/.ssh/authorized_keys"
+ssh-keygen -lf "$HOME/.ssh/authorized_keys"
 ```
+
+`id -un` 输出当前进程的有效用户名，参数含义见 [[Linux 用户、用户组、sudo 与文件权限#2.1 名称是给人看的，UID/GID 才参与判断|id 命令基础用法]]；结果应与刚才的 `SSH_USER` 一致，否则当前 `$HOME` 属于错误用户。有效配置应显示 `pubkeyauthentication yes`、`authorizedkeysfile` 包含 `.ssh/authorized_keys`、`strictmodes yes`；有 `Match` 时需按实际连接上下文核对。
+
+`$HOME/.ssh` 和 `authorized_keys` 应分别为 `700` 和 `600`，并归目标用户所有；用户家目录不应允许组或其他用户写入。`ssh-keygen` 可能输出多行指纹，其中必须有一行的密钥类型和 `SHA256:...` 指纹与客户端一致。注释不参与认证。如果找不到匹配指纹，不要继续收紧认证。详见 [[OpenSSH 常用命令基础#3.2 读取公钥指纹]] 与 [[Linux 用户、用户组、sudo 与文件权限]]。
+
+指纹一致只能证明公钥已写入服务端，实际认证仍需通过第 7 节的新会话验证。
 
 如果误追加重复公钥，先备份 `authorized_keys`，再只删除能确认重复的完整行。不要删除用途未知、可能仍被其他客户端使用的公钥。
 
@@ -327,11 +350,17 @@ case "$SSH_HOST" in
     ;;
 esac
 
-ssh -o IdentitiesOnly=yes -i "$KEY_PATH" "$SSH_USER@$SSH_HOST"
+ssh -F /dev/null \
+  -o IdentitiesOnly=yes \
+  -o PreferredAuthentications=publickey \
+  -i "$KEY_PATH" \
+  "$SSH_USER@$SSH_HOST"
 )
 ```
 
-成功时应使用指定密钥建立一个新的独立会话；失败时保持原有会话和控制台可用，不要继续收紧认证。身份选择与候选密钥范围见 [[OpenSSH 常用命令基础#2.5 高频选项按问题记忆]]。
+`-F /dev/null` 忽略用户级和系统级客户端配置，`IdentitiesOnly=yes` 限制候选密钥，`PreferredAuthentications=publickey` 只尝试公钥认证。因此，新会话成功才能证明指定密钥可用，而不是回退到密码认证。私钥口令用于在客户端解锁私钥，不是服务端登录密码。
+
+`-F /dev/null` 也会忽略 `~/.ssh/config` 中的端口、跳板机和代理设置。非默认端口需显式增加 `-p`；跳板或代理场景不属于本节的直连验证。详见 [[OpenSSH 常用命令基础#2.5 高频选项按问题记忆]]。失败时保持原有会话和控制台可用，不要继续收紧认证。
 
 登录后验证身份和连接：
 
@@ -345,7 +374,7 @@ printf 'SSH_CONNECTION=%s\n' "$SSH_CONNECTION"
 pwd
 ```
 
-只有新的独立会话成功，才能认为密钥登录可用。
+只有上述限定为指定身份和公钥认证的独立新会话成功，才能认为该密钥登录可用。
 
 ## 8. 使用客户端 ~/.ssh/config
 
@@ -612,9 +641,10 @@ ssh-keygen -R "$SSH_HOST"
 
 | 现象 | 优先检查 | 典型命令 |
 | --- | --- | --- |
-| 连接超时 | 地址、路由、防火墙 | `ip route`、`ufw status`、[[Linux 主机防火墙与 UFW 基础#11. 启用后无法连接时如何恢复|UFW 分层排查]] |
+| 连接超时 | 地址、路由、防火墙 | `ip route`、`ufw status`、[[Linux 主机防火墙与 UFW 基础#11. 启用后无法连接时如何恢复\|UFW 分层排查]] |
 | `Connection refused` | SSH socket 或服务是否监听 | `systemctl status ssh.socket ssh.service`、`ss -lntp` |
-| `Permission denied (publickey)` | 用户名、客户端密钥、目录权限 | `ssh -vvv`、`stat ~/.ssh` |
+| TCP 端口可达但 SSH 握手中断，或 `ssh.service` 启动失败 | 服务端是否有可用主机私钥 | `sshd -t`、`journalctl -u ssh.service` |
+| `Permission denied (publickey)` | 用户名、有效授权公钥路径、密钥指纹、目录权限 | `ssh -vvv`、`sshd -T`、`ssh-keygen -lf ~/.ssh/authorized_keys`、`stat ~/.ssh` |
 | 主机密钥警告 | 是否重装或地址复用 | 控制台 `ssh-keygen -lf` |
 | 登录后断开 | 用户 Shell、HOME 权限、服务日志 | `getent passwd`、`journalctl -u ssh` |
 | 终端与 IDE 行为不同 | 是否使用相同别名和配置 | `ssh -G linux-host` |
@@ -652,10 +682,68 @@ sudo journalctl -u ssh.service -b -n 100 --no-pager
 若上述检查分支成功完成，配置检查已经通过，再读取当前有效配置：
 
 ```bash
-sudo sshd -T | grep -E '^(port|pubkeyauthentication|passwordauthentication|permitrootlogin) '
+sudo sshd -T | grep -E '^(port|pubkeyauthentication|authorizedkeysfile|strictmodes|passwordauthentication|permitrootlogin) '
 ```
 
 若检查提示缺少 `/run/sshd`，按 [[OpenSSH 常用命令基础#5.4 sshd -t 提示缺少 /run/sshd]] 核对 systemd 运行时目录，不要直接手工创建目录或添加未经确认的 tmpfiles 规则。
+
+### 服务端缺少可用主机密钥
+
+主机身份核对发生在用户认证之前。如果所有已配置的主机私钥都缺失、权限不安全或无法读取，`sshd` 不能向客户端证明服务端身份，会在进入用户认证前退出；这不是 `authorized_keys`、客户端用户私钥或登录密码的问题。在 systemd socket activation 下，`ssh.socket` 仍可能使 TCP 端口表现为可达，但随后激活的 `ssh.service` 启动失败，因此不能把一次 `nc` 成功当成 SSH 握手可用。
+
+先通过控制台检查服务状态、日志和默认主机密钥文件：
+
+**执行位置：Linux 服务端（控制台，任意目录）**
+
+```bash
+systemctl status ssh.socket ssh.service --no-pager || true
+sudo journalctl -u ssh.service -b -n 100 --no-pager
+sudo find /etc/ssh -maxdepth 1 \
+  \( -name 'ssh_host_*_key' -o -name 'ssh_host_*_key.pub' \) \
+  -exec stat -c 'mode=%A owner=%U group=%G path=%n' {} +
+```
+
+结合前面的 `sshd -t` 或 systemd 启动结果区分三种状态：
+
+| 文件状态 | 对连接的影响 | 下一步 |
+| --- | --- | --- |
+| 只有某个 `.pub` 公钥副本缺失，对应私钥仍可用 | `sshd` 通常仍能使用私钥建立连接，但本篇读取该 `.pub` 指纹的命令会失败 | 不要重新生成私钥；可用 `sudo ssh-keygen -lf 对应私钥路径` 只读取指纹，并按主机的备份或管理方式恢复公钥副本 |
+| 某一种默认主机私钥缺失，仍有其他可用主机私钥 | 服务可能继续使用其余类型，但可用的主机密钥算法会减少 | 先确认缺失原因；确需补齐默认类型时再使用 `ssh-keygen -A` |
+| 没有任何可用主机私钥 | `sshd` 配置检查或服务启动失败，客户端无法完成 SSH 握手 | 优先恢复原主机密钥；无法恢复且接受身份变化时才生成新密钥 |
+
+对于已经被客户端信任的既有服务器，应先从可信备份、系统镜像或既定密钥管理流程恢复原主机私钥及对应公钥，以保持主机身份不变。不要把“文件不存在”直接当作授权重新生成；先确认它不是挂载失败、权限错误、自定义 `HostKey` 路径或意外删除。
+
+只有新服务器尚未建立主机身份，或者已经确认原密钥无法恢复并接受身份变化时，才补齐默认路径中缺失的主机密钥：
+
+**执行位置：Linux 服务端（控制台，任意目录）**
+
+```bash
+(
+if ! sudo ssh-keygen -A; then
+  printf '%s\n' '停止：无法补齐默认主机密钥。' >&2
+  exit 1
+fi
+if systemctl is-active --quiet ssh.service; then
+  if ! sudo sshd -t || ! sudo systemctl reload ssh.service; then
+    printf '%s\n' '停止：配置检查或 SSH 服务 reload 失败。' >&2
+    exit 1
+  fi
+elif ! sudo systemctl start ssh.service; then
+  printf '%s\n' '停止：SSH 服务启动失败。' >&2
+  exit 1
+fi
+if ! systemctl status ssh.socket ssh.service --no-pager; then
+  printf '%s\n' '停止：SSH socket 或 service 状态不符合预期。' >&2
+  sudo journalctl -u ssh.service -b -n 100 --no-pager
+  exit 1
+fi
+sudo journalctl -u ssh.service -b -n 100 --no-pager
+)
+```
+
+`ssh-keygen -A` 只为默认路径中尚不存在的默认类型生成主机密钥，不覆盖已经存在的默认主机密钥；它不会恢复丢失的原身份，也不能修复指向其他路径的自定义 `HostKey`。命令模式与影响范围见 [[OpenSSH 常用命令基础#3.4 补齐缺失的默认主机密钥（服务端恢复）]]。
+
+服务恢复后，先在控制台重新读取实际提供类型的主机指纹。恢复的是原密钥时，指纹应与原可信记录一致；生成的是新密钥时，按 [[#10. 主机指纹变化]] 通过独立可信通道确认新指纹，再逐个处理客户端旧记录。只有新会话完成主机身份核对和用户认证，恢复才算完成。
 
 ## 完成检查
 
@@ -664,18 +752,21 @@ sudo sshd -T | grep -E '^(port|pubkeyauthentication|passwordauthentication|permi
 - [ ] 服务端启动前配置检查通过，SSH socket 或服务正常监听。
 - [ ] 已根据 `sshd -T`、`ss` 和实际客户端探测确认有效地址与端口。
 - [ ] 首次连接前通过独立可信通道核对了主机指纹。
-- [ ] 用户公钥位于正确目标用户的 `authorized_keys`，对应私钥没有被传输。
-- [ ] 新开终端可以独立使用密钥登录。
+- [ ] 用户公钥位于正确目标用户的有效 `authorized_keys` 路径，服务端指纹与客户端公钥一致，对应私钥没有被传输。
+- [ ] 新开终端可以在不回退到密码或其他客户端身份的情况下，独立使用指定密钥登录。
 - [ ] `~/.ssh/config` 的别名可通过 `ssh -G` 核对。
 - [ ] 收紧认证时保留了控制台、旧会话、备份和回滚路径。
 - [ ] 能区分 SSH 监听、UFW 放行和用户认证三个层次。
 - [ ] 客户端 TCP 探测成功后，仍独立完成了主机身份与用户身份验证。
+- [ ] 能区分公钥副本缺失、部分主机私钥缺失与没有任何可用主机私钥，并优先恢复既有主机身份。
 - [ ] 遇到连接或认证失败时，能按地址、端口、主机身份、用户认证、会话创建的顺序排查。
 
 ## 官方参考资料
 
 - [Ubuntu Server：OpenSSH Server](https://documentation.ubuntu.com/server/how-to/security/openssh-server/)
 - [Ubuntu 24.04 LTS 发布说明：OpenSSH 的 systemd socket activation](https://documentation.ubuntu.com/release-notes/24.04/#openssh)
+- [Ubuntu 24.04：`ssh-keygen(1)` 手册](https://manpages.ubuntu.com/manpages/noble/man1/ssh-keygen.1.html)
+- [Ubuntu 24.04：`sshd(8)` 手册](https://manpages.ubuntu.com/manpages/noble/man8/sshd.8.html)
 - [IETF RFC 4252：SSH 用户认证协议](https://www.rfc-editor.org/rfc/rfc4252)
 - [IETF RFC 4253：SSH 传输层协议](https://www.rfc-editor.org/rfc/rfc4253)
 - [OpenBSD：sshd_config 手册](https://man.openbsd.org/sshd_config)
