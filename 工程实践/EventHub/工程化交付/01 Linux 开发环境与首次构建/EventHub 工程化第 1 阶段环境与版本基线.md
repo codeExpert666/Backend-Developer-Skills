@@ -1,6 +1,7 @@
 ---
-title: EventHub 第 1 阶段环境与版本基线
+title: EventHub 工程化第 1 阶段环境与版本基线
 aliases:
+  - EventHub 第 1 阶段环境与版本基线
   - EventHub Linux 开发环境版本矩阵
   - EventHub 第 1 阶段资源基线
 tags:
@@ -10,10 +11,10 @@ tags:
   - 开发环境
   - 版本基线
 created: 2026-07-17T00:48:00
-updated: 2026-07-25T14:29:00
+updated: 2026-07-26T22:44:42
 ---
 
-本文记录 EventHub 第 1 阶段采用的具体环境决策。它不是通用安装教程；资源如何估算见 [[UTM 虚拟机资源规划]]，网络路径如何选择见 [[虚拟机网络模式与可达性]]，工具安装和系统原理通过对应技术笔记学习。
+本文记录 EventHub 工程化第 1 阶段采用的具体环境决策。它不是通用安装教程；资源如何估算见 [[UTM 虚拟机资源规划]]，网络路径如何选择见 [[虚拟机网络模式与可达性]]，工具安装和系统原理通过对应技术笔记学习。
 
 > [!info] 核对时间与状态
 > 本基线中的宿主机、仓库和工具事实核对于 **2026-07-16**。它是开始实施前的决策依据，不代表 UTM 虚拟机已经创建，也不代表项目已经在 Linux 中构建成功。执行前必须重新运行本文的核对命令。
@@ -45,7 +46,7 @@ Mac mini 连接内部虚拟机仍是真实的 SSH 客户端—服务端流程，
 | CPU      | Apple M4，ARM64      | Ubuntu 客户机采用 ARM64，优先虚拟化而非 AMD64 模拟 | `uname -m`、`system_profiler`       |
 | 内存       | 24GB                | 候选分配 12GB，仍为 macOS、IDE 和浏览器保留余量     | `system_profiler`、Activity Monitor |
 | 根卷可用空间   | 约 347GiB            | 候选稀疏磁盘上限 180GB，但创建前必须重查             | `df -h /`                          |
-| UTM      | 当时未安装               | 第 1 阶段必须实际安装和创建后才能验收                | 检查 `/Applications/UTM.app`         |
+| UTM      | 当时未安装               | 工程化第 1 阶段必须实际安装和创建后才能验收          | 检查 `/Applications/UTM.app`         |
 | OrbStack | 已安装，版本 2.2.1        | 只用于说明边界，不代替完整 Ubuntu Server VM 主线   | `orb version`                      |
 | 候选 vCPU  | 6                   | 支撑并行 Go/Maven 构建和容器，同时避免占满宿主核心      | VM 内 `nproc`                       |
 | 候选内存     | 12GB                | 支撑 JDK、Go、IDE 远程进程和少量容器             | VM 内 `free -h`                     |
@@ -73,7 +74,7 @@ test -d /Applications/OrbStack.app && printf 'OrbStack installed\n' || printf 'O
 | UTM 模式 | Virtualize | 同架构硬件虚拟化比 AMD64 模拟更适合日常开发 |
 | 网络主线 | UTM Shared Network | 宿主机与客户机互通，配置变量少 |
 | SSH | 传统 OpenSSH | 直接学习 SSH 客户端、`sshd`、密钥和主机身份 |
-| Tailscale | 可选 | 只在需要 MacBook Air 外出访问时增加，不阻塞第 1 阶段 |
+| Tailscale | 可选 | 只在需要 MacBook Air 外出访问时增加，不阻塞工程化第 1 阶段 |
 | 项目目录 | `$HOME/src/eventhub-go`、`$HOME/src/eventhub` | 使用 Linux 本地文件系统，不沿用 macOS 绝对路径或长期运行在共享挂载 |
 
 ## 项目工具版本矩阵
@@ -137,7 +138,7 @@ docker compose version
 docker info
 ```
 
-第 1 阶段不是“命令能输出版本”就完成。最终还必须由 [[EventHub 仓库迁移与首次质量门禁]] 证明两个仓库能够在 Linux 本地文件系统中按当前 revision 完整验证。
+工程化第 1 阶段不是“命令能输出版本”就完成。最终还必须由 [[EventHub 仓库迁移与首次质量门禁]] 证明两个仓库能够在 Linux 本地文件系统中按当前 revision 完整验证。
 
 ## 相关知识笔记
 
