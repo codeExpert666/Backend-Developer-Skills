@@ -9,7 +9,7 @@ tags:
   - Java
   - Go
 created: 2026-07-26T20:55:24
-updated: 2026-07-26T21:49:59
+updated: 2026-07-27T01:44:22
 ---
 
 本文是 Java / Go 后端开发者进入 AI 应用开发的总路线。目标是通过可复现的小型实验和真实后端项目，逐步掌握模型调用、检索、工具编排、评测、安全与可观测性。
@@ -178,9 +178,12 @@ flowchart LR
 - **理解会查**：采样参数、上下文限制、Embedding 与工具调用的基本用途。
 - **认识即可**：Transformer 数学细节、训练过程、显存优化和分布式推理。
 
-### GitHub 源码
+### 学习入口
 
-主线阅读 [OpenAI Cookbook](https://github.com/openai/openai-cookbook) 中与文本生成、结构化输出、Embedding 和评测有关的最小示例。当前目标是读懂示例的数据流，不追踪 Notebook 的全部辅助代码。
+- 通用知识：[[AI 应用开发的系统分层与职责边界]]、[[大模型应用的输入、上下文与概率性输出]]、[[AI 评测、版本化与发布门禁]]。
+- 源码与实验资料：[[OpenAI Cookbook AI 应用实验导读]]。
+
+当前目标是读懂最小 Notebook 的输入、模型调用、输出与检查数据流，不追踪全部辅助代码，也不把示例输出当作当前 API 契约。
 
 ### 最小实验
 
@@ -227,11 +230,12 @@ flowchart LR
 - **理解会查**：SDK 类型设计、流式事件种类、连接池和客户端配置。
 - **认识即可**：旧 API 的兼容用法和 SDK 生成代码内部实现。
 
-### GitHub 源码
+### 学习入口
 
-- Java：[OpenAI Java](https://github.com/openai/openai-java) 的 Responses、Streaming、Structured Outputs、Function Calling 和 Error Handling 示例。
-- Go：[OpenAI Go](https://github.com/openai/openai-go) 中对应的 Responses、Streaming、Structured Outputs 和错误处理示例。
-- 辅助：[OpenAI Cookbook](https://github.com/openai/openai-cookbook) 的可靠调用与评测案例。
+- 通用知识：[[模型 API 请求生命周期与流式状态]]、[[结构化输出的 Schema 与业务校验]]、[[模型调用的错误分类、限流与幂等重试]]、[[Prompt 模板版本化与回归]]、[[模型 SDK、业务适配层与 AI 框架边界]]、[[AI 应用的成本、延迟、可观测性与降级]]。
+- Java 源码：[[OpenAI Java Responses API 源码导读]]。
+- Go 源码：[[OpenAI Go Responses API 源码导读]]。
+- 实验与评测辅助：[[OpenAI Cookbook AI 应用实验导读]]。
 
 ### 最小实验
 
@@ -277,13 +281,13 @@ Java 与 Go 都能通过同一组正常和失败测试；调用代码位于独�
 - **理解会查**：Spring AI 与 Eino 的核心抽象、扩展点和流式处理。
 - **认识即可**：LangChain4j、LangChainGo 等同类生态，不同时深入多套框架。
 
-### GitHub 源码
+### 学习入口
 
-- Java 主线：[Spring AI](https://github.com/spring-projects/spring-ai)。
-- Java 对照：[LangChain4j](https://github.com/langchain4j/langchain4j)。
-- Go 主线：[Eino](https://github.com/cloudwego/eino) 与 [Eino Examples](https://github.com/cloudwego/eino-examples)。
-- Go 生态认识：[LangChainGo](https://github.com/tmc/langchaingo)。
-- 原生基线继续使用 OpenAI Java / Go，避免只能依赖框架完成调用。
+- 通用知识：[[AI 应用开发的系统分层与职责边界]]、[[结构化输出的 Schema 与业务校验]]、[[Prompt 模板版本化与回归]]、[[模型 SDK、业务适配层与 AI 框架边界]]。
+- Java 框架：[[Spring AI ChatClient 与 Advisor 源码导读]]。
+- Go 框架：[[Eino Graph 与 Tool Calling 源码导读]]。
+- 原生对照：[[OpenAI Java Responses API 源码导读]]、[[OpenAI Go Responses API 源码导读]]。
+- 认识生态时只读 [LangChain4j](https://github.com/langchain4j/langchain4j) 与 [LangChainGo](https://github.com/tmc/langchaingo) 的同用例入口，不在本阶段同时深入第三套框架。
 
 ### 最小实验
 
@@ -330,12 +334,12 @@ Java 与 Go 都能生成可校验草稿；任何模型结果都不能直接发�
 - **理解会查**：余弦相似度、Recall@K、MRR、混合检索和向量索引参数。
 - **认识即可**：HNSW 等近似最近邻算法的底层实现和大规模分布式调优。
 
-### GitHub 源码
+### 学习入口
 
-- 服务端：[Qdrant](https://github.com/qdrant/qdrant)。
-- Java：[Qdrant Java Client](https://github.com/qdrant/java-client)。
-- Go：[Qdrant Go Client](https://github.com/qdrant/go-client)。
-- 框架集成继续参考 Spring AI 与 Eino，但先理解 Qdrant 原生数据模型。
+- 通用知识：[[Embedding、向量索引与派生数据边界]]、[[关键词、向量与混合检索及评测]]、[[AI 评测、版本化与发布门禁]]。
+- Java 客户端：[[Qdrant Java Client 向量检索源码导读]]。
+- Go 客户端：[[Qdrant Go Client 向量检索源码导读]]。
+- 服务端只读 [Qdrant 官方文档](https://qdrant.tech/documentation/) 与 [Qdrant 仓库](https://github.com/qdrant/qdrant) 的数据模型入口；框架集成继续按需回查 [[Spring AI ChatClient 与 Advisor 源码导读]] 与 [[Eino Graph 与 Tool Calling 源码导读]]。
 
 ### 最小实验
 
@@ -379,12 +383,12 @@ Java 先确定集合结构、同步策略和评测集；Go 复刻同一检索语
 - **理解会查**：重排、上下文压缩、Chunk 粒度、检索评测与答案评测。
 - **认识即可**：Graph RAG、复杂多阶段检索和未经需求证明的高级编排。
 
-### GitHub 源码
+### 学习入口
 
-- [OpenAI Cookbook](https://github.com/openai/openai-cookbook) 中检索与评测示例。
-- [Spring AI](https://github.com/spring-projects/spring-ai) 的 RAG 相关抽象。
-- [Eino Examples](https://github.com/cloudwego/eino-examples) 的检索与生成流程。
-- Qdrant 及其 Java / Go 客户端继续作为检索主线。
+- 通用知识：[[RAG 的证据链、引用与质量评测]]、[[关键词、向量与混合检索及评测]]、[[AI 应用安全威胁建模与防护]]。
+- 实验资料：[[OpenAI Cookbook AI 应用实验导读]]。
+- 框架入口：[[Spring AI ChatClient 与 Advisor 源码导读]]、[[Eino Graph 与 Tool Calling 源码导读]]。
+- 检索客户端：[[Qdrant Java Client 向量检索源码导读]]、[[Qdrant Go Client 向量检索源码导读]]。
 
 ### 最小实验
 
@@ -427,11 +431,11 @@ Java 先确定引用结构、拒答规则和评测集；Go 不复制 Java 包结
 - **理解会查**：多轮工具调用、并发工具、超时传播和错误分类。
 - **认识即可**：无人监督的长期自动操作和允许模型自由选择写入范围。
 
-### GitHub 源码
+### 学习入口
 
-- [OpenAI Java](https://github.com/openai/openai-java) 的 Function Calling / Responses 示例。
-- [OpenAI Go](https://github.com/openai/openai-go) 的工具调用示例。
-- Spring AI 与 Eino 的工具抽象只在原生循环已经理解后使用。
+- 通用知识：[[Tool Calling 生命周期与可靠业务边界]]、[[模型调用的错误分类、限流与幂等重试]]、[[AI 应用安全威胁建模与防护]]。
+- 原生 SDK：[[OpenAI Java Responses API 源码导读]]、[[OpenAI Go Responses API 源码导读]]。
+- 框架工具循环：[[Spring AI ChatClient 与 Advisor 源码导读]]、[[Eino Graph 与 Tool Calling 源码导读]]；只在原生调用循环已经理解后进入。
 
 ### 最小实验
 
@@ -476,11 +480,12 @@ Java 先定义共享工具语义和测试数据；只读工具通过后再验证
 - **理解会查**：MCP Client / Server、能力协商、传输方式、会话和错误传播。
 - **认识即可**：多 Agent、长期自主运行、动态发现并执行未知的有副作用工具。
 
-### GitHub 源码
+### 学习入口
 
-- [MCP Java SDK](https://github.com/modelcontextprotocol/java-sdk)。
-- [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)。
-- 现有 OpenAI SDK、Spring AI 与 Eino 继续承担模型调用和受控循环。
+- 通用知识：[[Tool Calling 生命周期与可靠业务边界]]、[[受控 Agent 的执行、审批与恢复]]、[[MCP 生命周期、能力协商与安全边界]]、[[AI 应用安全威胁建模与防护]]。
+- Agent 编排：[[Eino Graph 与 Tool Calling 源码导读]]；Java 侧继续复用已经验证的普通 Service、Tool Calling 或确定性工作流，不为对称性强行引入框架。
+- MCP SDK：[[MCP Java SDK Client 与 Server 源码导读]]、[[MCP Go SDK Client 与 Server 源码导读]]。
+- 协议安全：[[OWASP GenAI 与 MCP Security 安全资料导读]]。
 
 ### 最小实验
 
@@ -526,12 +531,12 @@ Agent 在固定步骤、工具、时间和预算内运行；任何影响用户�
 - **理解会查**：OpenTelemetry GenAI 语义约定、Langfuse 数据模型和评测扩展方式。
 - **认识即可**：只有现有评测无法解决问题时才考虑的微调、本地模型、多 Agent、多模态和推荐系统。
 
-### GitHub 源码与规范
+### 学习入口
 
-- 观测：[Langfuse](https://github.com/langfuse/langfuse)。
-- 标准：[OpenTelemetry GenAI 语义约定](https://opentelemetry.io/docs/specs/semconv/)。
-- 安全：[OWASP GenAI Top 10](https://genai.owasp.org/llm-top-10/)。
-- MCP 安全：[MCP Security Best Practices](https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices)。
+- 通用知识：[[AI 评测、版本化与发布门禁]]、[[AI 应用安全威胁建模与防护]]、[[AI 应用的成本、延迟、可观测性与降级]]、[[Prompt 模板版本化与回归]]。
+- 观测平台：[[Langfuse Trace 与评测数据模型源码导读]]。
+- 跨语言语义约定：[[OpenTelemetry GenAI 语义约定导读]]。
+- 安全资料：[[OWASP GenAI 与 MCP Security 安全资料导读]]。
 
 ### 最小实验
 
@@ -643,4 +648,4 @@ Prompt Injection、敏感信息泄露、越权工具调用、恶意检索内容�
 3. 不把“最新版”当作兼容性结论，以目标项目实际使用的 Java、Go、Spring Boot 和其他运行时基线为约束。
 4. 模型、SDK、Prompt 或检索配置发生变化后，重新运行固定评测集。
 
-本路线中的来源清单于 2026-07-26 按官方页面核对；后续使用时仍需重新确认。
+本路线中的来源清单于 2026-07-27 按官方页面核对；后续使用时仍需重新确认。MCP 已公开下一版候选规范，2026-07-28 之后进入实现前必须先从 Versioning 页面重新确认 current protocol version。

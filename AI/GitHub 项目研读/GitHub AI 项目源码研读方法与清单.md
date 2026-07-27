@@ -10,12 +10,12 @@ tags:
   - Java
   - Go
 created: 2026-07-26T20:55:24
-updated: 2026-07-26T21:49:59
+updated: 2026-07-27T01:44:22
 ---
 
 本文用于把“看过开源项目”转化为“能够复现、解释并迁移到实际 Java / Go 后端项目的工程能力”，是 [[AI 应用开发学习路线图]] 的源码研读配套清单。
 
-仓库状态、默认分支和框架兼容线会变化。每次研读必须记录所选 release、tag 或 commit，不把默认分支当成稳定版本。本文链接核对日期为 2026-07-26；实际开始研读时仍需重新核对。
+仓库状态、默认分支和框架兼容线会变化。每次研读必须记录所选 release、tag 或 commit，不把默认分支当成稳定版本。本文链接核对日期为 2026-07-27；实际开始研读时仍需重新核对。
 
 每次研读使用 [[AI 学习与实验记录模板]] 保存问题、版本、最小复现、失败场景、设计取舍和迁移结论。
 
@@ -108,6 +108,25 @@ README 是入口；规范与公开 API 定义契约，测试提供所选版本�
 用“采用 / 调整后采用 / 不采用”记录结论，说明原因、适用边界和验证证据；再与目标项目的业务边界、运行时约束和当前成熟度比较。
 
 能解释差异、通过固定测试并写出停止理由，本轮才算完成。“成功返回一次”不能作为完成标准。
+
+## 官方项目导读入口
+
+下面的独立导读保存本次核对的稳定 release、tag 或 commit、模块地图、最小调用链和停止条件。本文后续项目章节继续负责“带着什么问题去读”；易变版本和源码路径以对应导读及实际研读记录为准。
+
+| 项目或资料 | 独立导读 | 当前路线用途 |
+| --- | --- | --- |
+| OpenAI Java | [[OpenAI Java Responses API 源码导读]] | Java 原生 Responses、流式、结构化输出、工具和错误基线 |
+| OpenAI Go | [[OpenAI Go Responses API 源码导读]] | Go 原生 Responses、`context.Context`、流和错误基线 |
+| OpenAI Cookbook | [[OpenAI Cookbook AI 应用实验导读]] | Notebook、数据处理和评测方法，不作为 SDK 契约 |
+| Spring AI | [[Spring AI ChatClient 与 Advisor 源码导读]] | Java `ChatClient`、Advisor、Tool Calling 与 provider 边界 |
+| Eino 与 Eino Examples | [[Eino Graph 与 Tool Calling 源码导读]] | Go Graph、ReAct、Tool、取消与检查点 |
+| Qdrant Java Client | [[Qdrant Java Client 向量检索源码导读]] | Java 集合、写入、过滤查询和 deadline |
+| Qdrant Go Client | [[Qdrant Go Client 向量检索源码导读]] | Go 检索、`context.Context` 与显式重试 |
+| MCP Java SDK | [[MCP Java SDK Client 与 Server 源码导读]] | Java 生命周期、JSON-RPC、传输与 Tool Handler |
+| MCP Go SDK | [[MCP Go SDK Client 与 Server 源码导读]] | Go 生命周期、取消、SSE 恢复与 OAuth 中间件 |
+| Langfuse | [[Langfuse Trace 与评测数据模型源码导读]] | OTLP Trace 摄取、异步处理和数据治理边界 |
+| OpenTelemetry GenAI | [[OpenTelemetry GenAI 语义约定导读]] | Java / Go 共用的生成式 AI 遥测语义 |
+| OWASP GenAI 与 MCP Security | [[OWASP GenAI 与 MCP Security 安全资料导读]] | 把 LLM、Agent、MCP 风险映射为失败型测试 |
 
 ## OpenAI Java 与 OpenAI Go：原生 API 基线
 
@@ -260,7 +279,7 @@ AiServices、Model、Memory、Tool、Retriever / RAG 的组合方式与 Spring A
 
 先通过 [MCP Versioning](https://modelcontextprotocol.io/docs/learn/versioning) 锁定当前正式发布的协议版本；默认分支可能提前包含下一版内容，SDK 必须选择与已发布规范兼容的 release 或 tag。
 
-本文核对日的正式版本为 `2025-11-25`，对应的 [核心规范](https://modelcontextprotocol.io/specification/2025-11-25/basic)、[Server primitives](https://modelcontextprotocol.io/specification/2025-11-25/server/index) 和 [Authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization) 可作为本轮入口。后续研读必须从 Versioning 页面重新选择当前版本并把版本写入记录，再进入 Java / Go SDK 的 client、server、transport、auth、测试和 conformance 入口。
+本文核对日的正式版本为 `2025-11-25`，对应的 [核心规范](https://modelcontextprotocol.io/specification/2025-11-25/basic)、[Server primitives](https://modelcontextprotocol.io/specification/2025-11-25/server/index) 和 [Authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization) 可作为本轮入口。官方已经发布 `2026-07-28` 候选规范说明，但截至核对日它还不是 current protocol version；2026-07-28 之后必须先从 Versioning 页面重新核对，再进入 Java / Go SDK 的 client、server、transport、auth、测试和 conformance 入口。
 
 [MCP Servers](https://github.com/modelcontextprotocol/servers) 中的参考服务器适合学习协议能力，不应未经威胁建模与生产治理就直接作为目标项目的生产服务器模板。
 
@@ -297,7 +316,7 @@ Java 与 Go 各完成一个无副作用的只读业务查询工具 server / clie
 
 ### 入口、实验与停止条件
 
-从 [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) 与独立 GenAI 语义约定仓库进入，记录使用的 Schema URL、版本与稳定性状态。
+从 [OpenTelemetry GenAI Semantic Conventions 独立仓库](https://github.com/open-telemetry/semantic-conventions-genai) 进入；核心 Semantic Conventions 仓库从 `v1.42.0` 起只保留迁移说明。核对日独立仓库还没有 release/tag，全部 GenAI 约定仍为 Development，Schema URL 也尚未确定，因此必须记录具体 commit 和稳定性，不能虚构固定 Schema URL。
 
 形成一份 Java / Go 共同字段表，采集一个普通请求和一个 Tool / RAG trace，并验证默认不泄露 Prompt、检索原文或工具参数后停止。无需研究语义规范生成器内部实现。
 
