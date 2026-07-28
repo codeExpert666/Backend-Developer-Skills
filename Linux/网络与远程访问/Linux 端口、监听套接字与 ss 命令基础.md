@@ -10,7 +10,7 @@ tags:
   - Linux/命令行
   - 网络/端口
 created: 2026-07-20T23:28:11
-updated: 2026-07-28T22:10:18
+updated: 2026-07-28T22:51:47
 ---
 
 本文说明 Linux 中端口、通信端点、套接字、文件描述符、监听状态与已建立连接之间的关系，并使用 `ss` 读取内核当前保存的套接字状态。内容按端口与通信端点、进程使用套接字的方式、TCP 建连过程、`ss` 输出和回环实验依次展开。
@@ -177,11 +177,11 @@ sequenceDiagram
     CP->>CK: socket()
     CK-->>CP: 返回 client_fd
     CP->>CK: connect(client_fd, 服务端端点)
-    Note over CK: TCP 连接（客户端侧）进入 SYN-SENT
+    Note over CK: 客户端套接字进入 SYN-SENT
     CK->>SK: SYN
-    Note over SK: TCP 连接（服务端侧）进入 SYN-RECV
+    Note over SK: 监听套接字保持 LISTEN<br/>服务端连接请求处于 SYN-RECV
     SK-->>CK: SYN + ACK
-    Note over CK: TCP 连接（客户端侧）进入 ESTAB
+    Note over CK: 客户端套接字进入 ESTAB
     CK->>SK: ACK
     Note over SK: 内核创建服务端已连接套接字<br/>套接字进入 ESTAB 并加入已完成连接队列
     CK-->>CP: connect() 返回 0
@@ -342,7 +342,7 @@ LISTEN 0      4096   192.0.2.10:8080     0.0.0.0:*
 ss -ant
 ```
 
-其中 `-a` 表示显示监听和非监听套接字。只查看已经建立的 TCP 连接，可以使用：
+其中 `-a` 表示显示监听和非监听套接字。只查看处于已建立状态的 TCP 套接字，可以使用：
 
 ```bash
 ss -tn state established
@@ -359,7 +359,7 @@ ESTAB 0      0      192.0.2.10:8080     198.51.100.25:53000
 
 它与上一节的监听行不是同一个套接字：
 
-- `ESTAB` 表示 TCP 连接已经建立。
+- `ESTAB` 表示该 TCP 套接字处于已建立状态。
 - 本地端点仍使用服务端端口 `8080`。
 - 对端已经是某个具体客户端。
 - 另一位客户端会形成另一行，并由不同四元组区分。
