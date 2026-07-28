@@ -11,7 +11,7 @@ tags:
   - Tailscale
   - SSH
 created: 2026-07-16T00:28:30
-updated: 2026-07-23T23:20:05
+updated: 2026-07-28T18:01:37
 ---
 
 Tailscale 基于 WireGuard 建立受身份和访问策略控制的覆盖网络，使不同局域网或 NAT 后的设备可以互相到达。本篇采用清晰主线：**Tailscale 只解决网络可达性，登录仍使用传统 OpenSSH**。
@@ -85,7 +85,7 @@ command -v ssh
 command -v tailscale || true
 ```
 
-如果传统 SSH 本身失败，应先修复 [[OpenSSH 密钥登录、服务端配置与排查]] 中对应层次，不要用 Tailscale 掩盖服务端问题。应从 OpenSSH 有效配置确认端口，再在 `ss` 输出中匹配对应的 `Local Address:Port`；使用 `ssh.socket` 时，监听进程可能显示为 `systemd`，因此不要只执行 `grep sshd`，详见 [[Linux 端口、监听套接字与 ss 命令基础#7. 在 SSH 排查中怎样使用]]。
+如果传统 SSH 本身失败，应先修复 [[OpenSSH 密钥登录、服务端配置与排查]] 中对应层次，不要用 Tailscale 掩盖服务端问题。应从 OpenSSH 有效配置确认端口，再在 `ss` 输出中匹配对应的 `Local Address:Port`；使用 `ssh.socket` 时，监听进程可能显示为 `systemd`，因此不要只执行 `grep sshd`，详见 [[Linux 端口、监听套接字与 ss 命令基础#7. SSH 监听排查]]。
 
 ## 5. 在 Linux 主机安装 Tailscale
 
