@@ -11,7 +11,7 @@ tags:
   - Linux/安全
   - Ubuntu
 created: 2026-07-16T00:31:57
-updated: 2026-07-30T21:25:20
+updated: 2026-07-30T21:54:06
 ---
 
 本文给出一台新装 Ubuntu Server 的通用初始化顺序：先保留控制台恢复入口，再核对身份、主机名、时区、网络、DNS、时间和软件包，最后核对或建立 OpenSSH 入口、UFW 与服务基线。
@@ -364,7 +364,7 @@ sudo ufw allow OpenSSH
 sudo ufw show added
 ```
 
-本初始化主线不修改 routed/forwarded 策略。`allow OpenSSH` 也不会限制来源地址；需要按网段或接口收紧时，按 [[Linux 主机防火墙与 UFW 基础#5.2 把访问需求写成显式端口规则]] 单独设计。
+本初始化主线不修改 routed/forwarded 策略。`allow OpenSSH` 也不会限制来源地址；需要按网段或接口收紧时，按 [[Linux 主机防火墙与 UFW 基础#5.3 匹配条件决定哪些流量命中规则]] 单独设计。
 
 ### 9.4 启用并验证
 
