@@ -11,7 +11,7 @@ tags:
   - Linux/安全
   - Ubuntu
 created: 2026-07-16T00:31:57
-updated: 2026-07-25T15:56:55
+updated: 2026-07-30T21:25:20
 ---
 
 本文给出一台新装 Ubuntu Server 的通用初始化顺序：先保留控制台恢复入口，再核对身份、主机名、时区、网络、DNS、时间和软件包，最后核对或建立 OpenSSH 入口、UFW 与服务基线。
@@ -339,7 +339,7 @@ sudo ufw show added
 sudo ufw app info OpenSSH
 ```
 
-将输出中的端口与第 8 节确认的实际监听端口比较。`OpenSSH` 是 UFW profile 名称，不是服务状态；只有二者一致时，才继续使用 `allow OpenSSH`。不一致时直接转到 [[Linux 主机防火墙与 UFW 基础#8. 自定义 SSH 端口时如何判断]]，不要猜测端口。
+将输出中的端口与第 8 节确认的实际监听端口比较。`OpenSSH` 是 UFW profile 名称，不是服务状态；只有二者一致时，才继续使用 `allow OpenSSH`。不一致时直接转到 [[Linux 主机防火墙与 UFW 基础#6.1 确认 SSH 管理入口并选择规则写法]]，不要猜测端口。
 
 ### 9.3 设置策略并添加 SSH 规则
 
@@ -364,7 +364,7 @@ sudo ufw allow OpenSSH
 sudo ufw show added
 ```
 
-本初始化主线不修改 routed/forwarded 策略。`allow OpenSSH` 也不会限制来源地址；需要按网段或接口收紧时，按 [[Linux 主机防火墙与 UFW 基础#9. UFW 规则动作与范围限制]] 单独设计。
+本初始化主线不修改 routed/forwarded 策略。`allow OpenSSH` 也不会限制来源地址；需要按网段或接口收紧时，按 [[Linux 主机防火墙与 UFW 基础#5.2 把访问需求写成显式端口规则]] 单独设计。
 
 ### 9.4 启用并验证
 
@@ -400,7 +400,7 @@ sudo ufw disable
 sudo ufw status verbose
 ```
 
-`disable` 不会删除已保存规则。恢复连接后按 [[Linux 主机防火墙与 UFW 基础#11. 启用后无法连接时如何恢复]] 比较监听端口、profile、规则和 SSH 日志；修正并复测后再启用，不要把长期关闭防火墙当作修复完成。
+`disable` 不会删除已保存规则。恢复连接后按 [[Linux 主机防火墙与 UFW 基础#7.3 按层次定位]] 比较监听端口、profile、规则和 SSH 日志；修正并复测后再启用，不要把长期关闭防火墙当作修复完成。
 
 ## 10. 检查服务与日志基线
 
@@ -486,7 +486,7 @@ stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
 
 ### UFW 启用后 SSH 超时
 
-从控制台运行 `sudo ufw status numbered`，同时比较 `sudo sshd -T | grep '^port '`、`sudo ss -lntp`、application profile 和防火墙规则。必要时先 `sudo ufw disable` 恢复入口，再按 [[Linux 主机防火墙与 UFW 基础#11. 启用后无法连接时如何恢复]] 分层排查。
+从控制台运行 `sudo ufw status numbered`，同时比较 `sudo sshd -T | grep '^port '`、`sudo ss -lntp`、application profile 和防火墙规则。必要时先 `sudo ufw disable` 恢复入口，再按 [[Linux 主机防火墙与 UFW 基础#7.3 按层次定位]] 分层排查。
 
 ### `systemctl --failed` 出现服务
 

@@ -17,7 +17,7 @@ tags:
   - SSH
   - OpenSSH
 created: 2026-07-16T00:28:30
-updated: 2026-07-26T21:50:33
+updated: 2026-07-30T00:03:20
 ---
 
 SSH 是一套加密远程访问协议，OpenSSH 是其常用实现，通常由客户端 `ssh` 与服务端 `sshd` 配合工作。本篇以传统公钥登录为主线，完成服务端准备、网络入口核对、主机指纹验证、用户密钥登记、客户端配置、认证收紧和故障排查。
@@ -129,7 +129,7 @@ sudo sshd -T | grep -E '^(port|listenaddress|pubkeyauthentication|authorizedkeys
 
 确认端口、监听地址和各项认证配置符合预期。第 6 节会写入 `$HOME/.ssh/authorized_keys`，因此 `authorizedkeysfile` 必须包含 `.ssh/authorized_keys`；使用 `Match` 时，还要按实际连接上下文核对。详见 [[OpenSSH 常用命令基础#5.1 区分 sshd -t 与 sshd -T]] 与 [[OpenSSH 常用命令基础#5.2 Match 条件需要连接上下文]]。
 
-监听状态与主机防火墙是不同层次：`sshd` 或 `ssh.socket` 正常监听，不代表 UFW 已允许外部连接；UFW 允许端口，也不代表 SSH 主机指纹或用户认证正确。启用防火墙前应同时比较有效配置、`ss` 实际监听和 UFW 规则，详见 [[Linux 主机防火墙与 UFW 基础#6. 先比较 SSH 配置、监听状态与 UFW profile]]。
+监听状态与主机防火墙是不同层次：`sshd` 或 `ssh.socket` 正常监听，不代表 UFW 已允许外部连接；UFW 允许端口，也不代表 SSH 主机指纹或用户认证正确。启用防火墙前应同时比较有效配置、`ss` 实际监听和 UFW 规则，详见 [[Linux 主机防火墙与 UFW 基础#6.1 确认 SSH 管理入口并选择规则写法]]。
 
 ## 3. 取得地址并验证端口
 
@@ -818,7 +818,7 @@ sudo ss -lntp
 sudo ufw status verbose
 ```
 
-`ss` 只证明本机存在监听，UFW 允许规则也只证明主机防火墙的当前政策。只有客户端对实际地址和端口的 `nc` 探测成功，才说明这条 TCP 路径在当时可达。详见 [[Linux 网络接口、IP 地址、路由与 DNS 基础]]、[[Linux 端口、监听套接字与 ss 命令基础]]、[[TCP 端口连通性测试与 nc 命令基础]] 与 [[Linux 主机防火墙与 UFW 基础#11. 启用后无法连接时如何恢复]]。
+`ss` 只证明本机存在监听，UFW 允许规则也只证明主机防火墙的当前政策。只有客户端对实际地址和端口的 `nc` 探测成功，才说明这条 TCP 路径在当时可达。详见 [[Linux 网络接口、IP 地址、路由与 DNS 基础]]、[[Linux 端口、监听套接字与 ss 命令基础]]、[[TCP 端口连通性测试与 nc 命令基础]] 与 [[Linux 主机防火墙与 UFW 基础#7.3 按层次定位]]。
 
 ### 11.3 排查 SSH 传输、服务启动与主机身份
 
