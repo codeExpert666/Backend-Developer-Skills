@@ -11,7 +11,7 @@ tags:
   - Ubuntu
   - UFW
 created: 2026-07-20T21:47:11
-updated: 2026-08-02T00:18:01
+updated: 2026-08-02T01:35:58
 ---
 
 本文从一台 Linux 主机的视角解释防火墙解决什么问题，并以 UFW（Uncomplicated Firewall，Ubuntu 常用的主机防火墙管理前端）建立第一套可观察、可验证、可恢复的入站规则。目标不是背诵命令或直接学习 nftables 等底层规则语法，而是能够根据“连接从哪里来、使用什么协议和端口、应允许到哪里”设计并验证规则。
@@ -26,7 +26,7 @@ updated: 2026-08-02T00:18:01
 > - **认识即可**：Netfilter 内核数据包过滤基础设施、iptables 与 nftables 等底层规则工具、转发流量和复杂自定义规则；出现网关、容器或生产网络需求时再深入。
 
 > [!info] 核对日期与适用范围
-> 本文于 **2026-08-01** 核对 Ubuntu Server 和 UFW 官方资料。当前主机的实际 UFW 版本应以第 4.1 节的 `dpkg-query` 输出为准。本文面向使用 UFW 管理主机防火墙的 Ubuntu Server；现有主机可能已经由 UFW、nftables、容器运行时或其他系统管理工具配置规则，修改前必须先识别实际管理边界。
+> 本文于 **2026-08-02** 核对 Ubuntu Server 和 UFW 官方资料。当前主机的实际 UFW 版本应以第 4.1 节的 `dpkg-query` 输出为准。本文面向使用 UFW 管理主机防火墙的 Ubuntu Server；现有主机可能已经由 UFW、nftables、容器运行时或其他系统管理工具配置规则，修改前必须先识别实际管理边界。
 
 ## 完成标准
 
@@ -827,6 +827,118 @@ sudo ufw show listening
 
 通用判读顺序是：先用 `ss` 确认真实监听事实；再分别用 `ufw status verbose` 查看运行状态及启用时的默认策略、用 `ufw status numbered` 查看当前用户规则、用 `ufw show added` 查看已保存的用户规则；最后把 `ufw show listening` 作为套接字与规则的关联报告。真实可达性仍需从实际客户端发起新连接测试。
 
+## 附录 B：已有 SSH 会话与 UFW 规则变更
+
+第 6、7 节要求保留基准会话，并在变更后建立全新会话，是因为“已有连接继续传输”与“当前规则允许建立新连接”是两类证据。
+
+> [!info] 适用边界
+> 以下判断以 Ubuntu 24.04 的 UFW 0.36.2-6 默认规则结构为前提。如果修改了 UFW 前置规则、清除了内核连接跟踪，或同时重启网络、OpenSSH 或主机，不能直接套用本附录的结论。
+
+UFW 默认入站判断可简化为：
+
+```text
+数据包进入主机
+  → UFW 前置规则
+    → ESTABLISHED（已建立）或 RELATED（与已有连接相关）：允许
+  → UFW 用户规则
+    → 按 allow、deny、reject 等规则匹配
+  → 规则未命中时使用默认策略
+```
+
+启用 UFW 前已建立的 SSH 会话通常会先命中连接状态规则，不再进入普通用户规则判断。变更后新建的 SSH 连接则从 `NEW`（新连接）状态开始，必须通过当前用户规则和默认策略。因此，普通用户规则更新与整套防火墙停止后重新启动不是同一类变更。
+
+| 操作类型 | 典型命令 | 对已有会话 | 验证要求 |
+| --- | --- | --- | --- |
+| 查询或预演 | `status`、`show`、`app info`、`--dry-run` | 不修改防火墙 | 只读结果不能代替真实连接 |
+| UFW 未启用时保存配置 | `default`、`allow`、`delete` | 当前流量不受已保存配置影响 | 启用后再建立全新会话 |
+| UFW 已启用时更新普通用户规则 | `allow`、`deny`、`delete`、`insert`、`prepend` | 通常继续匹配前置连接状态规则 | 新连接立即按变更后规则判断 |
+| 启用或重载整套 UFW 状态 | `enable`、`reload`、重启 UFW 服务、启用状态下修改默认策略 | 可能因规则链切换而中断 | 保留控制台或等价的独立恢复入口 |
+
+`disable` 会卸载运行中的 UFW 规则，已有 SSH 会话通常不会因 UFW 阻断而中断，但主机暴露面会扩大。`reset` 还会清除已保存规则，不应作为常规恢复手段。
+
+如果新会话失败、基准会话仍可用，应先保留现场，再添加正确规则并用全新会话验证；验证成功后才删除错误规则，并对最终状态再做一次新连接验证。如果所有 SSH 会话均已中断，只能从控制台或其他独立管理入口恢复。
+
+## 附录 C：UFW 规则命令速查表
+
+本附录只汇总 UFW 用户规则的常用命令，不替代第 2、5 节的规则设计和第 6、7 节的安全操作流程。`allow`、`deny`、`reject` 和 `limit` 是流量命中后的处理动作；直接使用其中一个动作会添加规则。`insert`、`prepend` 和 `delete` 则负责规则的位置或删除，不是新的处理动作。
+
+修改前先读取已保存规则和当前编号；UFW 尚未启用时，`status numbered` 可能只显示 `inactive`，仍应以 `show added` 检查已保存规则：
+
+```bash
+sudo ufw status numbered
+sudo ufw show added
+```
+
+### C.1 选择规则动作
+
+| 动作 | 流量命中后的处理 | 关键边界 |
+| --- | --- | --- |
+| `allow` | 允许通过 | 用于明确需要开放的访问路径 |
+| `deny` | 丢弃，不主动向来源返回拒绝原因 | 它会添加拒绝规则，不会删除已有的 `allow` 规则 |
+| `reject` | 拒绝，并向来源返回错误 | 适合希望客户端快速得知连接被拒绝的场景 |
+| `limit` | 允许正常连接，但限制同一来源频繁建立新连接 | 常用于 TCP 登录服务，不是带宽限速工具 |
+
+### C.2 添加、定位与删除规则
+
+下表每一行都是独立示例，不应按顺序整批执行。直接写动作时，规则默认添加到现有用户规则末尾：
+
+| 目的 | 命令示例 | 结果 |
+| --- | --- | --- |
+| 添加到末尾 | `sudo ufw allow 8080/tcp` | 在末尾添加一条 `allow` 规则；`deny`、`reject`、`limit` 也采用相同方式添加 |
+| 插入指定位置 | `sudo ufw insert 1 deny 8080/tcp` | 把新规则插入当前第 1 位，原规则依次后移 |
+| 放到同类规则最前面 | `sudo ufw prepend deny 8080/tcp` | 把新规则放到相同 IP 类型规则的最前面，不需要先确定编号 |
+| 按规则表达式删除 | `sudo ufw delete allow 8080/tcp` | 删除与原添加表达式对应的规则；启用 IPv6 时，通用表达式可以同时删除对应的 IPv4 与 IPv6 规则 |
+| 按当前编号删除 | `sudo ufw delete 3` | 只删除 `status numbered` 中当前第 3 项，随后编号重新排列 |
+
+UFW 按顺序检查用户规则，第一个匹配结果生效。因此，更具体的规则通常应放在更一般的规则之前。在只有一种 IP 地址族的简单规则列表中，`prepend` 看起来接近 `insert 1`；区别是 `prepend` 不依赖当前编号，并明确放到该 IP 类型规则的最前面。
+
+`deny` 不能用于“撤销”一条已有的允许规则。要撤销 `sudo ufw allow 8080/tcp`，应使用 `sudo ufw delete allow 8080/tcp`；如果还需要显式拒绝，再根据最终规则顺序单独添加 `deny`。UFW 没有修改动作或匹配条件的通用 `edit` / `replace` 命令，这类变更通常需要删除旧规则，再把新规则添加到正确位置。
+
+### C.3 常用规则语法骨架
+
+普通主机规则的完整语法可以压缩为：
+
+```text
+sudo ufw [--dry-run] [delete | insert NUM | prepend] ACTION \
+  [in | out [on INTERFACE]] [log | log-all] [proto PROTOCOL] \
+  [from ADDRESS [port PORT | app APPNAME]] \
+  [to ADDRESS [port PORT | app APPNAME]] [comment COMMENT]
+```
+
+其中 `ACTION` 是 `allow`、`deny`、`reject` 或 `limit`。方括号表示可选部分，`delete`、`insert NUM` 和 `prepend` 按当前操作选择其一；按编号删除则单独使用 `sudo ufw delete NUM`。常用片段如下：
+
+| 片段 | 作用 |
+| --- | --- |
+| `in` / `out` | 匹配进入本机或由本机发出的流量；省略时普通规则默认按入站处理 |
+| `on INTERFACE` | 限定流量经过的网络接口 |
+| `log` / `log-all` | 记录新连接或全部匹配数据包，不改变允许或拒绝结果 |
+| `proto PROTOCOL` | 限定 `tcp`、`udp` 等协议 |
+| `from ADDRESS` | 限定来源地址或网段 |
+| `to ADDRESS port PORT` | 限定目标地址和目标端口 |
+| `app APPNAME` | 用 application profile 引用端口和协议 |
+| `comment COMMENT` | 为规则保存说明文字 |
+
+本机作为中间节点转发流量时，在操作关键字前增加 `route`：
+
+```text
+sudo ufw [--dry-run] route [delete | insert NUM | prepend] ACTION MATCHING_CONDITIONS
+```
+
+`route` 规则与普通主机入站、出站规则的责任不同，只有确认本机确实承担路由或转发职责时才使用。
+
+### C.4 预演与检查
+
+| 要回答的问题 | 命令 | 边界 |
+| --- | --- | --- |
+| UFW 将怎样解析这次规则变更 | `sudo ufw --dry-run RULE` | 不保存、不加载规则，也不能证明服务正在监听或客户端能够连接 |
+| 保存过哪些用户规则 | `sudo ufw show added` | UFW 未启用时也可检查；不显示默认策略 |
+| 当前用户规则及顺序是什么 | `sudo ufw status numbered` | 主要用于 UFW 已启用时读取当前编号；编号会随插入和删除变化 |
+| 当前运行状态和默认策略是什么 | `sudo ufw status verbose` | 不是已保存用户规则的完整表达式清单 |
+| 当前有哪些 application profile | `sudo ufw app list` | 只列出 profile 名称，不证明应用已运行或监听 |
+| 某个 profile 声明哪些端口和协议 | `sudo ufw app info APPNAME` | 应继续与真实服务配置和 `ss` 监听结果核对 |
+
+`default`、`enable`、`disable`、`reload`、全局 `logging` 和 `reset` 管理的是默认策略、整套运行状态或全局日志，不是单条用户规则操作。其中 `reset` 会停用 UFW 并清除已保存配置，不能代替 `delete` 做日常规则维护。
+
 ## 后续阅读
 
 - 网络地址、路由与 DNS：[[Linux 网络接口、IP 地址、路由与 DNS 基础]]
@@ -842,5 +954,7 @@ sudo ufw show listening
 - [Ubuntu 安全文档：Linux 防火墙与 UFW](https://documentation.ubuntu.com/security/security-features/network/firewall/)
 - [Ubuntu 24.04 `ufw(8)` 手册（UFW 0.36.2-6）](https://manpages.ubuntu.com/manpages/noble/man8/ufw.8.html)
 - [Ubuntu 26.04 `ufw(8)` 手册（UFW 0.36.2-9build1）](https://manpages.ubuntu.com/manpages/resolute/man8/ufw.8.html)
+- [Ubuntu 24.04 UFW 0.36.2-6 源码：前置连接状态规则](https://git.launchpad.net/ufw/tree/conf/before.rules?h=debian%2F0.36.2-6#n23)
+- [Ubuntu 24.04 UFW 0.36.2-6 源码：用户规则更新与装载](https://git.launchpad.net/ufw/tree/src/backend_iptables.py?h=debian%2F0.36.2-6#n954)
 - [Ubuntu 24.04 UFW 0.36.2-6 源码：`show listening` 报告实现](https://git.launchpad.net/ufw/tree/src/frontend.py?h=debian%2F0.36.2-6#n286)
 - [Ubuntu 24.04 UFW 0.36.2-6 源码：读取内核套接字表](https://git.launchpad.net/ufw/tree/src/util.py?h=debian%2F0.36.2-6#n961)
