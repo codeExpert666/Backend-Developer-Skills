@@ -11,7 +11,7 @@ tags:
   - Ubuntu
   - UFW
 created: 2026-07-20T21:47:11
-updated: 2026-07-31T00:41:09
+updated: 2026-08-01T16:20:09
 ---
 
 本文从一台 Linux 主机的视角解释防火墙解决什么问题，并以 UFW（Uncomplicated Firewall，Ubuntu 常用的主机防火墙管理前端）建立第一套可观察、可验证、可恢复的入站规则。目标不是背诵命令或直接学习 nftables 等底层规则语法，而是能够根据“连接从哪里来、使用什么协议和端口、应允许到哪里”设计并验证规则。
@@ -26,7 +26,7 @@ updated: 2026-07-31T00:41:09
 > - **认识即可**：Netfilter 内核数据包过滤基础设施、iptables 与 nftables 等底层规则工具、转发流量和复杂自定义规则；出现网关、容器或生产网络需求时再深入。
 
 > [!info] 核对日期与适用范围
-> 本文于 **2026-07-30** 核对 Ubuntu Server 和 UFW 官方资料。当前主机的实际 UFW 版本应以第 4.1 节的 `dpkg-query` 输出为准。本文面向使用 UFW 管理主机防火墙的 Ubuntu Server；现有主机可能已经由 UFW、nftables、容器运行时或其他系统管理工具配置规则，修改前必须先识别实际管理边界。
+> 本文于 **2026-08-01** 核对 Ubuntu Server 和 UFW 官方资料。当前主机的实际 UFW 版本应以第 4.1 节的 `dpkg-query` 输出为准。本文面向使用 UFW 管理主机防火墙的 Ubuntu Server；现有主机可能已经由 UFW、nftables、容器运行时或其他系统管理工具配置规则，修改前必须先识别实际管理边界。
 
 ## 完成标准
 
@@ -175,13 +175,15 @@ sudo apt install ufw
 ```bash
 sudo ufw status verbose
 sudo ufw status numbered
+sudo grep -E '^DEFAULT_.*_POLICY' /etc/default/ufw
 sudo ufw show added
 ```
 
-三个命令回答的问题不同：
+四个命令回答的问题不同：
 
 - `status verbose`：UFW 当前是否启用；启用时还会显示默认策略和规则摘要。
 - `status numbered`：UFW 启用时按编号显示当前用户规则，便于定位；尚未启用时通常只显示 `Status: inactive`。
+- `grep -E '^DEFAULT_.*_POLICY' /etc/default/ufw`：从 UFW 配置文件读取已保存的策略变量；UFW 尚未启用时也能读取，但不能证明这些策略已经加载。
 - `show added`：显示通过 UFW 命令添加并保存的用户规则；UFW 尚未启用时也可用于检查准备加载的规则，但它不显示默认策略，也不能证明规则正在生效。
 
 这里的 `status` 展示 UFW 管理的状态和用户规则，不等于枚举容器运行时或其他工具加载的全部底层防火墙规则。
@@ -376,15 +378,16 @@ sudo ufw allow in on enp1s0 proto tcp from 198.51.100.0/24 to 192.0.2.10 port 80
 
 #### 分别检查保存状态与运行状态
 
-默认策略和显式规则属于不同配置对象，检查位置也不同。UFW 尚未启用时，先读取已保存的用户规则：
+默认策略和显式规则属于不同配置对象，检查位置也不同。UFW 尚未启用时，先分别读取已保存的默认策略和用户规则：
 
 **执行位置：Ubuntu Server（控制台或 SSH 会话，任意目录）；以下命令只读。**
 
 ```bash
+sudo grep -E '^DEFAULT_.*_POLICY' /etc/default/ufw
 sudo ufw show added
 ```
 
-`show added` 只显示通过 UFW 命令添加的用户规则，不显示默认策略。确认保存的显式规则与预演一致后，远程管理主机还必须按第 6 节保留恢复入口并安全启用；不要从本节的教学值直接跳到 `ufw enable`。
+配置文件查询用于核对默认策略是否已经按预期保存。`show added` 只显示通过 UFW 命令添加的用户规则，不显示默认策略。确认保存的默认策略和显式规则都与预演一致后，远程管理主机还必须按第 6 节保留恢复入口并安全启用；不要从本节的教学值直接跳到 `ufw enable`。
 
 只有 UFW 已经启用，或按第 6 节安全启用后，才使用以下命令检查运行状态：
 
@@ -405,6 +408,7 @@ sudo ufw status numbered
   → 设计必要的显式例外
   → 分别使用 --dry-run 预演
   → 设置默认策略并添加显式规则
+  → /etc/default/ufw 检查已保存的默认策略
   → show added 检查已保存的用户规则
   → 安全启用 UFW
   → status verbose 检查运行状态与默认策略
@@ -501,7 +505,15 @@ sudo ufw default deny incoming
 sudo ufw default allow outgoing
 ```
 
-如果任一命令的输出与预期不符，停止后续步骤，重新核对方向与动作并改回预期值；不要在策略尚未确认时继续启用 UFW。
+设置后立即执行只读查询，确认默认策略已经按预期保存：
+
+```bash
+sudo grep -E '^DEFAULT_.*_POLICY' /etc/default/ufw
+```
+
+本流程至少应确认 `DEFAULT_INPUT_POLICY="DROP"` 和 `DEFAULT_OUTPUT_POLICY="ACCEPT"`；其他策略变量不属于前面两条命令的修改目标。
+
+如果任一设置命令或查询结果与预期不符，停止后续步骤，重新核对方向与动作并改回预期值；不要在策略尚未确认时继续启用 UFW。
 
 入站策略只拒绝没有得到其他处理结果的新连接；主机主动出站后的返回流量仍按第 2.2 节说明的连接状态处理。这里没有执行 `default ... routed`，不是假定转发流量已经安全，而是因为本流程不负责路由器、网关或容器宿主的转发策略；出现这些角色时必须单独设计。
 
