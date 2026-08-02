@@ -11,7 +11,7 @@ tags:
   - Linux/安全
   - Ubuntu
 created: 2026-07-16T00:31:57
-updated: 2026-08-02T15:11:18
+updated: 2026-08-02T20:54:15
 ---
 
 本文给出一台新装 Ubuntu Server 的通用初始化顺序：先保留控制台恢复入口，再核对身份、主机名、时区、网络、DNS、时间和软件包，最后核对或建立 OpenSSH 入口、UFW 与服务基线。
@@ -35,7 +35,7 @@ updated: 2026-08-02T15:11:18
 - APT 索引可更新，待升级项目已经过审查。
 - `systemctl --failed` 中没有未解释的失败单元。
 - OpenSSH 已按需安装并核对激活路径，UFW 启用前已经保留控制台和可验证的 SSH 入口。
-- 已保存一份不含密码、令牌、私钥和完整环境变量的基线记录。
+- 已把初始化后的系统状态保存到受保护的本地基线文件，并确认文件完整、权限正确且没有主动采集凭据或完整日志。
 
 ## 1. 先保留恢复入口
 
@@ -323,67 +323,34 @@ fi
 
 ## 10. 检查服务与日志基线
 
-**执行位置：Ubuntu Server（控制台或 SSH 会话，任意目录）**
+第 2 节只记录初始化前的失败 unit。本节在软件升级、OpenSSH 和 UFW 配置完成后重新检查，确认这些操作没有留下无法解释的系统异常。
 
-```bash
-systemctl --failed --no-pager
-systemctl list-unit-files --state=enabled --no-pager
-journalctl -p warning -b --no-pager
-```
+这里需要依次回答三个不同问题：
 
-`enabled` 只表示服务被配置为随相应目标启动，不代表当前一定在运行；`active` 也不代表已启用自启动。进一步理解单元、依赖、状态和日志过滤见 [[systemd 服务与日志基础]]。
+1. **当前失败视图**：是否有 unit 处于 `failed` 状态。
+2. **启用配置视图**：哪些已安装 unit 文件被配置为在开机或其他触发条件下参与激活；这不等于它们当前正在运行。
+3. **当前启动日志视图**：本次启动中有哪些 warning 及更严重级别的消息；有日志不等于一定存在故障，需要结合来源、时间和实际影响判断。
 
-## 11. 保存非敏感基线
+先按 [[systemd 服务与日志基础#9. 综合检查：失败状态、启用关系与本次启动日志]] 完成三层检查。不要因为名称陌生就直接 `disable`、`stop`、`reset-failed` 或删除 unit，也不要为了得到空日志而忽略警告。
 
-**执行位置：Ubuntu Server（当前普通用户家目录）**
+> [!success] 进入第 11 节前的返回检查点
+> - 没有未解释的 failed unit；存在失败项时，已经通过目标 unit 的状态与日志定位原因。
+> - 能区分启用状态与当前运行状态，且没有发现无法解释的非预期启用项。
+> - 当前启动中的重要警告已经结合来源和实际影响审查；不要求日志必须为空。
 
-```bash
-(
-set -e
-set -o pipefail
+## 11. 保存系统状态基线
 
-if ! baseline_file="$(mktemp "$HOME/system-baseline.XXXXXX")"; then
-  printf '%s\n' '停止：无法创建唯一的基线文件。' >&2
-  exit 1
-fi
-readonly baseline_file
-printf 'baseline_file=%s\n' "$baseline_file"
+第 10 节是在终端中观察当前状态；本节把其中适合长期比较的结果连同系统、时间、网络、OpenSSH 和 UFW 摘要保存为一个带时间和用途的本地文本文件。该文件用于回答“之后发生了什么变化”，不能恢复系统，也不能单独证明主机健康或安全。
 
-{
-  printf 'captured_at=%s\n' "$(date --iso-8601=seconds)"
-  printf '\n[os]\n'
-  sed -n '1,20p' /etc/os-release
-  printf '\n[architecture]\n'
-  uname -m
-  dpkg --print-architecture
-  printf '\n[identity]\n'
-  id
-  printf '\n[hostname]\n'
-  hostnamectl
-  printf '\n[time]\n'
-  timedatectl status
-  printf '\n[storage]\n'
-  df -hT /
-  printf '\n[network]\n'
-  ip -brief address
-  ip route
-  printf '\n[failed-units]\n'
-  systemctl --failed --no-pager
-  printf '\n[ssh]\n'
-  systemctl show ssh.socket ssh.service \
-    --property=Id --property=LoadState \
-    --property=UnitFileState --property=ActiveState \
-    --no-pager 2>&1
-  printf '\n[ufw]\n'
-  sudo ufw status verbose
-} | tee "$baseline_file"
+按照 [[Ubuntu Server 状态基线的采集与比较#4. 采集一份完整的初始化后基线]] 执行完整示例，本次用途输入 `post-initialization`。专题笔记会逐段解释文件创建、采集内容、失败边界、权限检查和后续差异比较，本初始化主线不再复制同一套脚本。
 
-chmod 0600 "$baseline_file"
-stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
-)
-```
+基线不会主动采集密码、令牌、私钥、`/etc/shadow`、完整环境变量或完整 journal，但仍包含用户名、主机名、地址、路由和防火墙规则等主机信息。应只保存在受保护的位置；未经审查和脱敏，不要提交到 Git、同步到公开位置或直接发给他人。
 
-代码块在独立子 Shell 中启用 `errexit` 与 `pipefail`：任一采集命令或 `tee` 失败时，整体返回非零，不会继续把部分结果当作成功基线。`mktemp` 创建的唯一文件默认仅当前用户可读写；失败时可能保留一份已输出路径的部分文件，核对后再决定是否删除。保存内容不要加入密码、令牌、私钥、`/etc/shadow` 或完整环境变量。该文本只用于比较状态，不是系统备份。
+> [!success] 初始化完成前的返回检查点
+> - 文件末尾存在 `status=complete`，不是采集中断后留下的部分文件。
+> - 文件和目录权限已经核对，权限位没有向同组或其他普通用户授予读取权。
+> - 已人工检查采集范围，没有加入凭据、完整日志或其他不应保存的内容。
+> - 已记录文件路径、采集时间和用途；知道它是状态记录而不是系统备份。
 
 ## 常见问题
 
@@ -421,7 +388,7 @@ stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
 - [ ] OpenSSH 语法、激活单元和监听状态已验证。
 - [ ] UFW 先放行管理入口，再启用并用新会话复测。
 - [ ] 失败服务与重要警告日志均已解释。
-- [ ] 非敏感基线记录已检查并妥善保存。
+- [ ] 系统状态基线已完成采集，文件完整性、权限和内容边界已经检查。
 
 ## 官方参考资料
 

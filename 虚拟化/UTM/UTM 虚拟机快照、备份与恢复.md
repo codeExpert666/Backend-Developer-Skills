@@ -9,7 +9,7 @@ tags:
   - 备份恢复
   - Linux/运维
 created: 2026-07-16T00:28:30
-updated: 2026-07-26T19:40:18
+updated: 2026-08-02T16:20:54
 ---
 
 本文说明如何为 UTM 中的 Linux 虚拟机建立可恢复基线。重点不是“拥有一个快照”，而是区分快速回退点、关机状态的完整 VM 副本、源码备份、数据库备份和身份恢复，并通过隔离恢复演练证明备份可用。
@@ -75,38 +75,14 @@ linux-dev-toolchain-baseline-20260717
 
 ### 3.2 记录客户机状态
 
-下面命令会在客户机内创建一份不含密码和令牌的基线记录。
+客户机状态记录用于说明“这次 VM 回退点对应什么系统状态”，但它本身不能恢复 VM。按照 [[Ubuntu Server 状态基线的采集与比较#4. 采集一份完整的初始化后基线]] 采集新文件，本次用途输入 `before-vm-backup`；随后按该专题第 6 节检查完成标记、目录权限、文件权限和内容边界。
 
-**执行位置：Ubuntu 虚拟机（任意目录）**
+这份记录覆盖 Ubuntu、时间、资源、网络、systemd、OpenSSH 和 UFW 摘要。本节不再维护另一套容易漂移的采集脚本。UTM 版本、虚拟化后端、vCPU、内存上限、磁盘上限和网络模式仍由第 3.1 节单独记录，因为这些宿主侧事实无法从客户机命令完整获得。
 
-```bash
-umask 077
-BASELINE_DIR="$HOME/ops-baseline"
-BASELINE_FILE="$BASELINE_DIR/vm-$(date +%Y%m%dT%H%M%S).txt"
+> [!warning] 客户机基线不是公开材料
+> 它不会主动采集密码、令牌、私钥或完整日志，但仍包含用户名、主机名、地址、路由和防火墙规则。未经审查和脱敏，不要把原文件提交到 Git、放入公开笔记或直接发送给他人。
 
-mkdir -p "$BASELINE_DIR"
-
-{
-  date --iso-8601=seconds
-  hostnamectl
-  uname -a
-  printf '\nFilesystem:\n'
-  df -h
-  printf '\nMemory:\n'
-  free -h
-  printf '\nNetwork:\n'
-  ip -brief address
-  ip route
-  printf '\nTime:\n'
-  timedatectl
-  printf '\nFailed units:\n'
-  systemctl --failed
-} | tee "$BASELINE_FILE"
-
-printf 'baseline=%s\n' "$BASELINE_FILE"
-```
-
-不要把完整环境变量、私钥、访问令牌、数据库密码或内部凭据写入基线文件。
+建立 VM 快照或完整副本前，应记录该基线文件名及其采集时间，使客户机状态记录、UTM 配置记录和后续回退点能够相互对应。文件末尾的 `status=complete` 只证明采集流程到达完成标记，不证明 VM 备份已经创建或能够恢复。
 
 ### 3.3 核对源码状态
 
