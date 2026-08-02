@@ -10,39 +10,56 @@ tags:
   - systemctl
   - journalctl
 created: 2026-07-17T00:48:00
-updated: 2026-08-02T21:28:30
+updated: 2026-08-02T23:05:55
 ---
 
 本文介绍 systemd、unit、service、运行状态和 journal 日志的基础使用。目标是能回答“服务是否运行、为什么失败、是否建立了自动激活关系、配置从哪里加载”，并形成“先观察、再变更、最后验证”的处理顺序，而不是遇到问题就反复 `restart`。
 
 > [!info] 核对日期与适用范围
-> 本文于 **2026-08-02** 核对 systemd 官方手册与 Ubuntu 24.04 发布说明。示例面向使用 systemd 的 Ubuntu Server；不同发行版、Ubuntu 版本和软件包可能使用不同 unit 名称或激活方式，应先用 `systemctl --version`、本机手册和实际 unit 状态确认。
+> 本文于 **2026-08-02** 核对 systemd 官方手册与 Ubuntu 24.04 发布说明。示例面向使用 systemd 的 Ubuntu Server；不同发行版、Ubuntu 版本和软件包可能使用不同 unit 名称或激活方式，应先按第一节确认运行模型和版本基线，并结合本机手册和实际 unit 状态判断。
 
 > [!abstract] 本篇掌握目标
-> - **必须熟练**：区分加载状态、当前运行状态和 unit 文件启用状态；使用 `systemctl status` 和 `journalctl -u` 读取证据；先检查再变更。
+> - **必须熟练**：区分加载状态、当前运行状态和 unit 文件启用状态；按后文介绍的方法读取 unit 状态和日志证据；先检查再变更。
 > - **理解会查**：按需使用 start、stop、restart、reload、enable、disable 和 `daemon-reload`，找到 unit 主文件、drop-in 与 systemd 当前持有的关键属性，并保留远程恢复通道。
 > - **认识即可**：其他 unit 类型、复杂依赖关系和更高级的 journal 筛选；遇到服务编排或深入排障时再继续学习。
 >
 > 通用命令结构与帮助检索见 [[Linux 命令行学习路线与命令地图]] 和 [[Shell 命令结构、类型与帮助系统]]；本文较长的变量和判断代码块可配合 [[Shell 脚本阅读基础]] 阅读。程序、进程与服务的边界见 [[Linux 进程与系统资源常用命令]]。
 
-## 1. systemd、unit、service 与 journal
+## 1. 建立 systemd 的对象模型并确认运行环境
 
-在常见 Ubuntu Server 安装中，systemd 作为 PID 1 运行，负责系统启动、unit 生命周期和依赖关系。
+Linux 内核完成早期初始化后，会启动第一个用户空间进程，其进程编号为 PID 1。在常见 Ubuntu Server 安装中，systemd 作为 PID 1 运行，承担系统和服务管理器的职责，负责系统启动、unit 生命周期和依赖关系。
 
-- **systemd**：系统和服务管理器。
-- **unit**：systemd 管理的对象，名称通常带有表示类型的后缀，例如 `ssh.service` 或 `ssh.socket`。
-- **unit file**：描述 unit 配置和依赖关系的磁盘文件；unit 还可能有 drop-in 覆盖片段或运行时生成的定义。
-- **service**：unit 的一种，负责启动和监督一个或多个服务进程；service 不等于单个 PID。
-- **journal**：systemd-journald 收集的结构化日志；它记录事件，但不能单独证明服务健康或业务功能正常。
+systemd 以 unit 作为基本管理对象。unit 是由名称标识、可被 systemd 查询和操作的逻辑对象，例如 `ssh.service` 或 `ssh.socket`。systemd 会为 unit 加载定义、解析它与其他 unit 之间的依赖关系、跟踪当前状态，并处理针对它发起的启动、停止等操作。
 
-**执行位置：Ubuntu 主机（任意目录，只读检查）**
+多数 unit 的定义来自以下两类磁盘配置文件：
 
-```bash
-ps -p 1 -o pid=,comm=,args=
-systemctl --version
+- **unit file**：保存 unit 主体定义的配置文件，可以声明显式依赖关系和通用管理规则；对于 service unit，还可以包含启动命令、重启策略等设置。
+- **drop-in**：附加配置片段，用来补充或覆盖主体定义中的部分设置。
+
+systemd 读取并合并这些配置后，按照 unit 名称管理相应对象。下面用一个假设存在的 `app.service` 表示定义来源、管理对象与运行实例之间的关系：
+
+```text
+定义来源
+unit file（主体定义）+ 可选的 drop-in（补充或覆盖定义）
+                         ↓ systemd 读取并合并定义
+管理对象
+app.service unit（systemd 管理的逻辑对象）
+                         ↓ unit 被启动
+运行实例
+一个或多个应用进程（每个进程都有自己的 PID）
 ```
 
-`ps` 在这里读取 PID 1 的瞬时进程快照：`-p 1` 选择 PID 1，`-o` 指定 `pid`（进程编号）、`comm`（命令名）和 `args`（命令及其参数）三个输出列，列名后的 `=` 省略表头。完整方法见 [[Linux 进程与系统资源常用命令#4.1 按名称找到候选进程，再按 PID 核对|按 PID 核对进程]]。
+这里的 `.service` 表示 service unit。systemd 通过这种 unit 描述并管理一项服务的生命周期；进程则是程序的一次运行实例。以 `app.service` 为例：
+
+1. **启动前**：systemd 可以已经加载 `app.service` 的定义，但该 unit 仍处于 inactive（未激活）状态，此时不一定存在应用进程。
+2. **启动后**：systemd 按照 unit 配置创建并监督一个或多个进程，每个进程都有自己的 PID。
+3. **进程退出后**：根据 unit 类型、进程退出结果和重启策略，该 unit 可能回到 inactive、进入 failed（失败）状态，或者创建新进程。新进程会获得新的 PID，但 systemd 仍通过 `app.service` 这个 unit 名称管理这项服务。
+
+因此，unit file、service unit、进程和 PID 分别属于定义来源、管理对象、运行实例和进程标识，不能视为同一个对象。
+
+并非所有 unit 都对应一个持久保存的主体配置文件；少数 unit 可以由系统动态生成或临时创建。初学阶段先掌握 unit file 与 drop-in 这条常见路径，遇到来源不明确的 unit 时，再按第四节的方法检查实际配置来源和 systemd 当前持有的属性。
+
+**systemd-journald** 也遵循上述层次：systemd 通过 `systemd-journald.service` 管理 systemd-journald 日志守护进程（daemon，长期在后台运行的程序），该进程收集日志并维护称为 **journal** 的结构化日志集合。journal 是日志数据，不是 unit 或进程。
 
 systemd 管理的不只有 service：
 
@@ -56,6 +73,32 @@ systemd 管理的不只有 service：
 | `.target` | 聚合一组 unit，形成启动或同步目标 |
 
 本文主要学习 `.service`，遇到 socket、timer 或其他 unit 时仍使用相同的“确认名称 → 读取状态 → 查看日志 → 理解激活关系”思路。
+
+### 1.1 三种观察工具分别回答什么
+
+| 工具 | 直接观察的对象 | 主要回答的问题 | 边界 |
+| --- | --- | --- | --- |
+| `ps` | 进程快照 | 实际运行的是哪个进程 | 不显示 systemd 持有的 unit 状态 |
+| `systemctl` | systemd 管理器及 unit | 管理器如何加载和管理 unit | unit 状态不能替代真实业务功能验证 |
+| `journalctl` | journal | 已经记录了什么事件 | 不控制 unit；没有匹配记录也不等于事件从未发生 |
+
+进程、unit 状态和日志是三类互有关联但不能相互替代的证据。排障时应根据问题组合使用，并通过服务自身的功能检查得出最终结论。
+
+### 1.2 确认运行模型与版本基线
+
+继续查询 unit 状态前，先完成两项性质不同的检查：确认当前 PID 1 是否为 systemd，用于判断本文的系统级管理模型是否直接适用；记录本机 systemd 工具版本，用于核对不同发行版和版本的行为差异。
+
+**执行位置：Ubuntu 主机（任意目录，只读检查）**
+
+```bash
+ps -p 1 -o pid=,comm=,args=
+systemctl --version
+```
+
+- `ps` 显示 PID 1 的命令名和启动参数，用于识别当前初始化系统；命令字段和进程快照的完整读法见 [[Linux 进程与系统资源常用命令#4.1 按名称找到候选进程，再按 PID 核对|按 PID 核对进程]]。
+- `systemctl --version` 输出本机 systemd 工具的版本信息后退出，只记录版本基线，不用于判断 PID 1 或服务健康状态。
+
+如果 PID 1 不是 systemd，应先确认当前使用的初始化系统或隔离环境，不要机械套用后续系统级命令。确认 systemd 正作为 PID 1 运行后，再进入第二节查询 unit 状态；需要追踪事件和失败上下文时，使用第三节的 journal 方法。
 
 ## 2. 先区分三类状态
 
@@ -429,9 +472,21 @@ sudo journalctl -u "$UNIT_NAME" -b -n 100 --no-pager
 
 需要把系统、网络、OpenSSH、UFW 与上述 systemd 摘要保存为受保护的本地文件时，继续使用 [[Ubuntu Server 状态基线的采集与比较]]。完整 journal 默认不进入状态基线，因为日志可能包含请求参数、地址、路径或凭据片段。
 
+## 10. 常见问题
+
+### 10.1 systemd-journald 由 systemd 启动，会漏掉 systemd 的启动早期日志吗？
+
+systemd-journald 进程尚未启动时，确实不能立即处理日志，但这不等于启动早期日志必然丢失。默认设计会通过中间缓冲来跨越这段启动时序：
+
+- systemd 自身默认优先把日志发送到 journal 接收通道；该通道尚不可用时，可退回到 `kmsg`（内核日志缓冲区接口）。
+- `systemd-journald.socket` 等 socket unit 会在启动早期建立日志接收入口。在队列容量内，内核可以暂存已经送达 socket、但尚未被 systemd-journald 读取的消息。
+- systemd-journald 启动后会读取 `kmsg` 和相关 socket，再把收到的记录写入 journal。启动早期收到的日志通常先写入 `/run/log/journal`；已配置持久存储时，待 `/var` 可用后再刷新到 `/var/log/journal`。
+
+因此，要区分“当时还没有 systemd-journald 进程处理”和“日志已经永久丢失”。这套机制能承接多数启动早期日志，但不是完整性保证：缓冲区容量、日志级别和限流、本机配置、initrd 交接或只写入控制台等情况仍可能造成缺失。`journalctl -b` 只能显示当前启动中实际进入 journal 的记录，空结果不能证明事件从未发生。
+
 ## 完成标准
 
-- [ ] 能解释 systemd、unit、unit file、service、进程与 journal 的职责边界。
+- [ ] 能解释 systemd、unit、unit file、service、进程、systemd-journald 与 journal 的职责边界。
 - [ ] 能区分加载状态、当前运行状态和 unit 文件启用状态。
 - [ ] 能组合 unit、启动范围、数量、优先级和持续跟踪等 journal 筛选维度。
 - [ ] 能找到 unit 主文件、drop-in 与 systemd 当前持有的关键属性。
@@ -454,6 +509,8 @@ sudo journalctl -u "$UNIT_NAME" -b -n 100 --no-pager
 
 - [systemd：systemctl](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html)
 - [systemd：journalctl](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html)
+- [systemd：systemd-journald.service](https://www.freedesktop.org/software/systemd/man/latest/systemd-journald.service.html)
+- [systemd：journald.conf](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)
 - [systemd：systemd.unit](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html)
 - [systemd：systemd-analyze](https://www.freedesktop.org/software/systemd/man/latest/systemd-analyze.html)
 - [Ubuntu 24.04 LTS 发布说明：OpenSSH socket activation](https://documentation.ubuntu.com/release-notes/24.04/#openssh)
