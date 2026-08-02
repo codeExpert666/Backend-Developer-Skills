@@ -11,7 +11,7 @@ tags:
   - Linux/安全
   - Ubuntu
 created: 2026-07-16T00:31:57
-updated: 2026-07-30T21:54:06
+updated: 2026-08-02T15:11:18
 ---
 
 本文给出一台新装 Ubuntu Server 的通用初始化顺序：先保留控制台恢复入口，再核对身份、主机名、时区、网络、DNS、时间和软件包，最后核对或建立 OpenSSH 入口、UFW 与服务基线。
@@ -309,98 +309,17 @@ fi
 
 ## 9. 安全启用 UFW
 
-UFW 的规则模型与排障方法见 [[Linux 主机防火墙与 UFW 基础]]。本节只保留新主机的安全启用顺序：检查现状、匹配 SSH 端口、添加规则、启用并用新连接验证。
+本节只负责把 Ubuntu 初始化主线交给 UFW 专题，不再维护另一套容易漂移的防火墙命令。继续前，第 8 节保留的控制台和可用 SSH 会话必须仍可使用，并且已经从另一终端完成一次启用前重新登录。
 
-### 9.1 安装并检查现状
+如果尚未理解主机防火墙的连接层次、规则要素、UFW 状态和验证边界，先学习 [[Linux 主机防火墙与 UFW 基础]] 第 1～5 节；随后严格按照 [[Linux 主机防火墙与 UFW 基础#6. 实践：在保留 SSH 管理入口的前提下首次启用 UFW]] 完成当前主机操作。是否可以套用首次启用流程、何时必须停止，以及 OpenSSH application profile（应用配置档案）与实际端口不一致时如何选择规则，均以该专题的前置条件和分支为准。
 
-第 8 节的控制台和已验证 SSH 会话必须仍然可用。先安装 UFW，再读取当前状态和已保存规则：
+> [!success] 进入第 10 节前的返回检查点
+> - UFW 的运行状态为 `active`，默认策略与已保存用户规则均已按当前主机需求核对。
+> - SSH 的有效配置、真实监听端口与 UFW 允许规则一致。
+> - 启用 UFW 后已经从真实客户端建立并稳定使用一条全新的 SSH 会话。
+> - 在新会话验证成功前，控制台和启用前保留的基准会话始终保持可用。
 
-**执行位置：Ubuntu Server（控制台或已验证的 SSH 会话，任意目录）**
-
-```bash
-# 安装软件包；这一步不会启用防火墙。
-sudo apt install ufw
-```
-
-安装成功后查看运行状态与已添加规则：
-
-```bash
-sudo ufw status verbose
-sudo ufw show added
-```
-
-安装、添加规则和启用是三个独立步骤。若 UFW 已经是 `active`，或存在无法解释的规则，停止套用新主机流程；不要用会清除既有规则的 `ufw reset` 获取空列表。
-
-### 9.2 核对 OpenSSH profile
-
-读取 UFW 为 OpenSSH 提供的 application profile：
-
-```bash
-sudo ufw app info OpenSSH
-```
-
-将输出中的端口与第 8 节确认的实际监听端口比较。`OpenSSH` 是 UFW profile 名称，不是服务状态；只有二者一致时，才继续使用 `allow OpenSSH`。不一致时直接转到 [[Linux 主机防火墙与 UFW 基础#6.1 确认 SSH 管理入口并选择规则写法]]，不要猜测端口。
-
-### 9.3 设置策略并添加 SSH 规则
-
-仅在确认没有需要保留的既有策略后执行：
-
-```bash
-# 未命中的新入站连接默认拒绝，出站连接默认允许。
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-```
-
-先预演规则：
-
-```bash
-sudo ufw --dry-run allow OpenSSH
-```
-
-确认预演结果中的协议和端口正确后，再添加并检查规则：
-
-```bash
-sudo ufw allow OpenSSH
-sudo ufw show added
-```
-
-本初始化主线不修改 routed/forwarded 策略。`allow OpenSSH` 也不会限制来源地址；需要按网段或接口收紧时，按 [[Linux 主机防火墙与 UFW 基础#5.3 匹配条件决定哪些流量命中规则]] 单独设计。
-
-### 9.4 启用并验证
-
-保持控制台和原有 SSH 会话，再启用 UFW：
-
-```bash
-sudo ufw enable
-sudo ufw status verbose
-sudo ufw status numbered
-sudo ufw show listening
-```
-
-不要使用 `ufw --force enable` 跳过首次警告。确认 `Status` 为 `active`、默认策略正确，且 OpenSSH 规则与实际端口一致；系统启用 IPv6 时还要核对对应的 IPv6 规则。
-
-随后从客户端重新建立一条 SSH 连接，不复用启用前已经存在的会话。登录成功后执行：
-
-```bash
-hostnamectl --static
-id
-sudo ufw status verbose
-```
-
-只有这条启用后新建的会话稳定成功，才能关闭控制台和原有会话。命令退出状态不能代替对状态、规则和实际连接的检查。
-
-### 9.5 从控制台恢复
-
-如果启用后的新会话失败，从控制台暂时停用 UFW：
-
-**执行位置：Ubuntu Server（控制台）**
-
-```bash
-sudo ufw disable
-sudo ufw status verbose
-```
-
-`disable` 不会删除已保存规则。恢复连接后按 [[Linux 主机防火墙与 UFW 基础#7.3 按层次定位]] 比较监听端口、profile、规则和 SSH 日志；修正并复测后再启用，不要把长期关闭防火墙当作修复完成。
+如果启用后的新会话失败，不要关闭控制台或基准会话，也不要在保存现场前直接停用或重置 UFW。先按 [[Linux 主机防火墙与 UFW 基础#7.2 新连接失败时保留现场并恢复入口]] 保留证据并判断是否需要临时恢复入口，再按 [[Linux 主机防火墙与 UFW 基础#7.3 按层次定位]] 查明原因。完成修正、重新启用和新会话验证前，不进入第 10 节。
 
 ## 10. 检查服务与日志基线
 
@@ -486,7 +405,7 @@ stat -c 'mode=%A owner=%U group=%G path=%n' "$baseline_file"
 
 ### UFW 启用后 SSH 超时
 
-从控制台运行 `sudo ufw status numbered`，同时比较 `sudo sshd -T | grep '^port '`、`sudo ss -lntp`、application profile 和防火墙规则。必要时先 `sudo ufw disable` 恢复入口，再按 [[Linux 主机防火墙与 UFW 基础#7.3 按层次定位]] 分层排查。
+保留控制台和仍可用的基准会话，先按 [[Linux 主机防火墙与 UFW 基础#7.2 新连接失败时保留现场并恢复入口]] 保存 UFW 状态、规则与真实监听信息，再按 [[Linux 主机防火墙与 UFW 基础#7.3 按层次定位]] 分层排查。只有确实需要先恢复新的远程管理入口时，才在保留现场后从控制台临时停用 UFW。
 
 ### `systemctl --failed` 出现服务
 
