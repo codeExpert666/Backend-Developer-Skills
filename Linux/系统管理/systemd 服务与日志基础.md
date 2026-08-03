@@ -10,7 +10,7 @@ tags:
   - systemctl
   - journalctl
 created: 2026-07-17T00:48:00
-updated: 2026-08-02T23:05:55
+updated: 2026-08-03T21:15:00
 ---
 
 本文介绍 systemd、unit、service、运行状态和 journal 日志的基础使用。目标是能回答“服务是否运行、为什么失败、是否建立了自动激活关系、配置从哪里加载”，并形成“先观察、再变更、最后验证”的处理顺序，而不是遇到问题就反复 `restart`。
@@ -98,24 +98,37 @@ systemctl --version
 - `ps` 显示 PID 1 的命令名和启动参数，用于识别当前初始化系统；命令字段和进程快照的完整读法见 [[Linux 进程与系统资源常用命令#4.1 按名称找到候选进程，再按 PID 核对|按 PID 核对进程]]。
 - `systemctl --version` 输出本机 systemd 工具的版本信息后退出，只记录版本基线，不用于判断 PID 1 或服务健康状态。
 
-如果 PID 1 不是 systemd，应先确认当前使用的初始化系统或隔离环境，不要机械套用后续系统级命令。确认 systemd 正作为 PID 1 运行后，再进入第二节查询 unit 状态；需要追踪事件和失败上下文时，使用第三节的 journal 方法。
+如果 PID 1 不是 systemd，应先确认当前使用的初始化系统或隔离环境，不要机械套用后续系统级命令。确认 systemd 正作为 PID 1 运行后，下一步不是立即启动或重启服务，而是先理解 systemd 如何描述一个 unit：它会分别记录定义是否成功加载、unit 当前处于哪个生命周期阶段，以及 unit 文件是否建立了后续激活关系。第二节先建立这套状态模型；需要追踪状态变化的过程和失败上下文时，再使用第三节的 journal 方法。
 
-## 2. 先区分三类状态
+## 2. 一个 unit 为什么会同时有多种状态
 
-systemd 的状态不是一个简单的“开或关”。排查时至少区分以下三个维度：
+第一节已经把 unit 确定为 systemd 管理的逻辑对象。为了管理这个对象，systemd 不能只记录一个笼统的“开”或“关”，还需要分别回答三个问题：定义能否使用、unit 现在处于什么阶段、以后是否存在相应的激活关系。本节将这三类彼此独立的信息统称为 unit 的“状态”。这里的状态不同于 `ps` 观察到的进程状态，也不能单独说明服务的实际功能是否正常。
 
-| 维度 | 常见值 | 回答的问题 | 不能单独证明什么 |
-| --- | --- | --- | --- |
-| 加载状态 | `loaded`、`not-found`、`error` | systemd 是否找到并成功加载 unit 定义 | unit 当前正在运行 |
-| 当前运行状态 | `active`、`inactive`、`failed` 以及更细的 SubState | unit 此刻处于什么生命周期状态 | 下次启动或触发时会自动激活 |
-| unit 文件启用状态 | `enabled`、`disabled`、`static`、`masked` 等 | unit 文件是否建立了某种持久激活关系或受到限制 | unit 此刻正在运行 |
+继续使用第一节中假设存在的 `app.service`：假设该 unit 支持 enable，systemd 已经成功加载它的定义，其 unit 文件当前为 disabled。管理员手工启动它以后，同一时刻可以得到以下三个结果：
 
-`active` 与 `enabled` 因而是两个独立维度：
+```text
+定义是否成功加载：loaded
+unit 当前是否激活：active
+unit 文件启用状态：disabled
+```
+
+`loaded + active + disabled` 并不矛盾，因为三个结果描述的是同一个对象的不同方面。排查时至少要区分以下三个维度：
+
+| 观察层面 | 对应属性 | 常见值 | 回答的问题 | 不能单独证明什么 |
+| --- | --- | --- | --- | --- |
+| 定义加载 | `LoadState` | `loaded`、`not-found`、`error` | systemd 是否找到并成功加载 unit 定义 | unit 当前正在运行 |
+| 当前生命周期 | `ActiveState` 和更细的 `SubState` | `ActiveState`：`active`、`inactive`、`failed`；`SubState`：`running`、`exited` 等 | unit 此刻处于什么生命周期状态 | 下次启动或触发时会自动激活，或者业务功能正常 |
+| unit 文件启用关系 | `UnitFileState` | `enabled`、`disabled`、`static`、`masked` 等 | unit 文件是否建立了持久激活关系或受到限制 | unit 此刻正在运行 |
+
+以 service unit 常见的 `active (running)` 为例，`active` 是较粗粒度的 `ActiveState`，括号中的 `running` 是更具体的 `SubState`。不同 unit 类型具有不同的 SubState；`active (exited)` 表示 unit 仍被 systemd 视为 active，但不保证存在常驻进程，还要结合 unit 类型、`MainPID` 和实际职责判断。
+
+最容易混淆的是当前运行状态与 unit 文件启用状态：
 
 - unit 可以 active 但 disabled，例如被手工启动或被其他 unit 临时拉起。
-- unit 可以 enabled 但 inactive，例如触发条件尚未出现，或启动尝试已经失败。
-- `active (exited)` 不保证存在常驻进程，还要结合 unit 类型、`MainPID`、SubState 和 `status` 判断。
+- unit 可以 enabled 但 inactive，例如当前尚未被启动、触发条件尚未出现，或启动尝试已经失败。
 - `enabled` 的准确含义是 unit 文件已按其安装信息接入激活或依赖关系；它可能在开机、某个 target、socket、timer 或其他条件下参与激活，不应简单等同于“当前正在运行”。
+
+### 2.1 使用 systemctl 读取这些状态
 
 常用只读命令骨架如下。`UNIT_NAME` 表示包含后缀的完整 unit 名称，这段语法骨架不直接执行：
 
@@ -125,18 +138,13 @@ systemctl is-active UNIT_NAME
 systemctl is-enabled UNIT_NAME
 ```
 
-`status` 面向人工阅读；`is-active` 和 `is-enabled` 适合快速查询并通过退出状态表达结果。inactive、disabled、failed 或不存在等结果可能返回非零，这不等于命令没有提供诊断价值。在普通交互式 Shell 中，非零状态默认不会自动退出当前会话；放入脚本时必须显式处理。
+- `systemctl status` 面向人工阅读，在一份摘要中显示加载状态、当前运行状态、主进程和部分近期日志等信息。
+- `systemctl is-active` 只快速查询当前运行状态。
+- `systemctl is-enabled` 只快速查询 unit 文件启用状态。
 
-> [!example] Ubuntu OpenSSH 的 socket activation 特例
-> Ubuntu 22.10 起，`openssh-server` 软件包默认配置为使用 systemd socket activation；Ubuntu 24.04 又调整了 `ssh.socket` 的生成方式。因此 `ssh.service` 显示 inactive 或 disabled 时，不能直接断言 SSH 入口不可用。先同时检查 socket 与 service，再结合真实监听和新客户端连接判断。具体机制见 [[OpenSSH 密钥登录、服务端配置与排查#2. 在服务端准备 sshd]]。
+需要直接读取 `LoadState`、`ActiveState`、`SubState` 和 `UnitFileState` 等属性时，第四节会使用 `systemctl show`。无论使用哪种查询方式，unit 状态都不能替代进程、监听端口或服务自身的功能验证。
 
-**执行位置：Ubuntu Server（任意目录，只读检查）**
-
-```bash
-systemctl status ssh.socket ssh.service --no-pager
-systemctl is-active ssh.socket
-systemctl is-enabled ssh.socket
-```
+`status`、`is-active` 和 `is-enabled` 在 unit 处于 inactive、disabled、failed 或不存在等结果时可能返回非零。这不等于命令没有提供诊断价值；在普通交互式 Shell 中，非零状态默认不会自动退出当前会话，放入脚本时则必须显式处理。
 
 列出当前已经加载并处于 failed 状态的 unit：
 
@@ -147,6 +155,20 @@ systemctl --failed --no-pager
 ```
 
 `systemctl --failed` 只回答“当前有哪些已加载 unit 处于 failed 状态”。空列表不能证明所有服务、端口和业务功能都符合预期。
+
+### 2.2 应用到 Ubuntu OpenSSH：检查完整激活链
+
+理解单个 unit 的三类状态后，还要注意一项服务能力可能由多个 unit 协作提供。Ubuntu 22.10 起，`openssh-server` 软件包默认配置为使用 systemd socket activation；Ubuntu 24.04 又调整了 `ssh.socket` 的生成方式。因此，`ssh.service` 显示 inactive 或 disabled 时，不能直接断言 SSH 入口不可用：`ssh.socket` 可能正在监听，并在连接到来时激活 `ssh.service`。
+
+此时仍然使用前面的状态模型，但要分别查询激活链上的 socket unit 和 service unit，再结合真实监听和新客户端连接判断。具体机制见 [[OpenSSH 密钥登录、服务端配置与排查#2. 在服务端准备 sshd]]。
+
+**执行位置：Ubuntu Server（任意目录，只读检查）**
+
+```bash
+systemctl status ssh.socket ssh.service --no-pager
+systemctl is-active ssh.socket
+systemctl is-enabled ssh.socket
+```
 
 ## 3. 使用 journalctl 建立只读诊断闭环
 
