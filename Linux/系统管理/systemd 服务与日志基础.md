@@ -10,13 +10,13 @@ tags:
   - systemctl
   - journalctl
 created: 2026-07-17T00:48:00
-updated: 2026-08-03T21:15:00
+updated: 2026-08-09T21:57:05
 ---
 
 本文介绍 systemd、unit、service、运行状态和 journal 日志的基础使用。目标是能回答“服务是否运行、为什么失败、是否建立了自动激活关系、配置从哪里加载”，并形成“先观察、再变更、最后验证”的处理顺序，而不是遇到问题就反复 `restart`。
 
 > [!info] 核对日期与适用范围
-> 本文于 **2026-08-02** 核对 systemd 官方手册与 Ubuntu 24.04 发布说明。示例面向使用 systemd 的 Ubuntu Server；不同发行版、Ubuntu 版本和软件包可能使用不同 unit 名称或激活方式，应先按第一节确认运行模型和版本基线，并结合本机手册和实际 unit 状态判断。
+> 本文于 **2026-08-02** 核对 systemd 官方手册与 Ubuntu 24.04 发布说明；关于 `LoadState`、`LoadError` 和 `NeedDaemonReload` 的边界于 **2026-08-09** 依据 systemd v255 D-Bus API 补充核对。示例面向使用 systemd 的 Ubuntu Server；不同发行版、Ubuntu 版本和软件包可能使用不同 unit 名称或激活方式，应先按第一节确认运行模型和版本基线，并结合本机手册和实际 unit 状态判断。
 
 > [!abstract] 本篇掌握目标
 > - **必须熟练**：区分加载状态、当前运行状态和 unit 文件启用状态；按后文介绍的方法读取 unit 状态和日志证据；先检查再变更。
@@ -98,13 +98,26 @@ systemctl --version
 - `ps` 显示 PID 1 的命令名和启动参数，用于识别当前初始化系统；命令字段和进程快照的完整读法见 [[Linux 进程与系统资源常用命令#4.1 按名称找到候选进程，再按 PID 核对|按 PID 核对进程]]。
 - `systemctl --version` 输出本机 systemd 工具的版本信息后退出，只记录版本基线，不用于判断 PID 1 或服务健康状态。
 
-如果 PID 1 不是 systemd，应先确认当前使用的初始化系统或隔离环境，不要机械套用后续系统级命令。确认 systemd 正作为 PID 1 运行后，下一步不是立即启动或重启服务，而是先理解 systemd 如何描述一个 unit：它会分别记录定义是否成功加载、unit 当前处于哪个生命周期阶段，以及 unit 文件是否建立了后续激活关系。第二节先建立这套状态模型；需要追踪状态变化的过程和失败上下文时，再使用第三节的 journal 方法。
+如果 PID 1 不是 systemd，应先确认当前使用的初始化系统或隔离环境，不要机械套用后续系统级命令。确认 systemd 正作为 PID 1 运行后，下一步不是立即启动或重启服务，而是先理解 systemd 如何描述一个 unit：它会分别记录定义是否成功加载、unit 当前处于哪个生命周期阶段，以及系统是否已经安排在后续某个启动流程中一并激活这个 unit。第二节先建立这套状态模型；需要追踪状态变化的过程和失败上下文时，再使用第三节的 journal 方法。
 
 ## 2. 一个 unit 为什么会同时有多种状态
 
-第一节已经把 unit 确定为 systemd 管理的逻辑对象。为了管理这个对象，systemd 不能只记录一个笼统的“开”或“关”，还需要分别回答三个问题：定义能否使用、unit 现在处于什么阶段、以后是否存在相应的激活关系。本节将这三类彼此独立的信息统称为 unit 的“状态”。这里的状态不同于 `ps` 观察到的进程状态，也不能单独说明服务的实际功能是否正常。
+第一节已经把 unit 确定为 systemd 管理的逻辑对象。为了管理这个对象，systemd 不能只记录一个笼统的“开”或“关”，而要分别回答三个问题：
 
-继续使用第一节中假设存在的 `app.service`：假设该 unit 支持 enable，systemd 已经成功加载它的定义，其 unit 文件当前为 disabled。管理员手工启动它以后，同一时刻可以得到以下三个结果：
+1. systemd 是否找到并成功读取了这个 unit 的定义？
+2. 这个 unit 此刻处于运行、停止还是失败等哪种阶段？
+3. 这个 unit 是否已经被安排在某个后续启动流程中一并激活？
+
+第三个问题不关心 unit 现在是否运行，而是关心系统是否已经为它设置了后续启动安排。第一节已经介绍，target 可以聚合一组 unit；当某个 target 被激活时，纳入其中的 unit 可以被一并激活。systemd 把“是否已经为当前 unit 设置这类安排”称为 **unit 文件启用状态**。
+
+最常见的两个结果是：
+
+- `enabled`：已经为当前 unit 设置了相应的后续启动安排。当相关启动流程发生时，它可以因此被一并激活；这不表示它现在正在运行，也不保证后续一定启动成功。
+- `disabled`：当前没有为这个 unit 设置上述安排。这不表示它被禁止运行；它仍然可以被手工启动，也可能通过其他 unit 的依赖关系、socket 或 timer 等路径被激活。
+
+这里的 `enabled` 和 `disabled` 只描述当前 unit 的这种启用安排，不能穷尽它所有可能的激活路径。还要区分两个常见边界：`static` 通常表示 unit 没有可供直接设置这类安排的安装信息，但仍可被其他 unit 依赖或触发；`masked` 表示后续激活会被明确拒绝，比 `disabled` 更强，也不等于已经停止当前运行实例。
+
+继续使用第一节中假设存在的 `app.service`。如果 systemd 已经成功加载它的定义，管理员又手工启动了它，但没有设置上述后续启动安排，那么同一时刻可以得到：
 
 ```text
 定义是否成功加载：loaded
@@ -112,21 +125,33 @@ unit 当前是否激活：active
 unit 文件启用状态：disabled
 ```
 
-`loaded + active + disabled` 并不矛盾，因为三个结果描述的是同一个对象的不同方面。排查时至少要区分以下三个维度：
+`loaded + active + disabled` 并不矛盾：定义已经加载，unit 当前由手工操作启动，但它没有被设置为随某个后续启动流程一并激活。
+
+反过来，如果已经设置后续启动安排，却没有在当前时刻启动 `app.service`，则可以同时看到：
+
+```text
+定义是否成功加载：loaded
+unit 当前是否激活：inactive
+unit 文件启用状态：enabled
+```
+
+这可能发生在只设置启用安排而没有立即启动 unit，或者 unit 后来又被停止等场景。因此，`enabled` 只表示安排已经存在，不能固定解释成“正在等待触发条件满足”。
+
+把上述概念汇总后，排查时至少要区分以下三个维度：
 
 | 观察层面 | 对应属性 | 常见值 | 回答的问题 | 不能单独证明什么 |
 | --- | --- | --- | --- | --- |
-| 定义加载 | `LoadState` | `loaded`、`not-found`、`error` | systemd 是否找到并成功加载 unit 定义 | unit 当前正在运行 |
-| 当前生命周期 | `ActiveState` 和更细的 `SubState` | `ActiveState`：`active`、`inactive`、`failed`；`SubState`：`running`、`exited` 等 | unit 此刻处于什么生命周期状态 | 下次启动或触发时会自动激活，或者业务功能正常 |
-| unit 文件启用关系 | `UnitFileState` | `enabled`、`disabled`、`static`、`masked` 等 | unit 文件是否建立了持久激活关系或受到限制 | unit 此刻正在运行 |
+| 定义加载 | `LoadState` | `loaded`、`not-found`、`bad-setting`、`error` | systemd 是否找到并成功加载 unit 定义 | unit 当前正在运行 |
+| 当前生命周期 | `ActiveState` 和更细的 `SubState` | `ActiveState`：`active`、`inactive`、`failed`；`SubState`：`running`、`exited` 等 | unit 此刻处于什么生命周期状态 | 后续启动安排已经设置，或者业务功能正常 |
+| unit 文件启用状态 | `UnitFileState` | `enabled`、`disabled`、`static`、`masked` 等 | 当前 unit 的后续启动安排处于什么状态，或是否受到启用限制 | unit 此刻正在运行 |
 
 以 service unit 常见的 `active (running)` 为例，`active` 是较粗粒度的 `ActiveState`，括号中的 `running` 是更具体的 `SubState`。不同 unit 类型具有不同的 SubState；`active (exited)` 表示 unit 仍被 systemd 视为 active，但不保证存在常驻进程，还要结合 unit 类型、`MainPID` 和实际职责判断。
 
-最容易混淆的是当前运行状态与 unit 文件启用状态：
+以上三个维度是并列的观察结果，不是“只有先得到 `loaded`，`ActiveState` 和 `UnitFileState` 才有意义”的前后关系。`loaded` 表示 systemd 管理器当前已经成功加载该 unit 的定义，通常是 systemd 按当前定义再次激活这个 unit 的前提；但它不是另外两个维度具有诊断意义的前提。
 
-- unit 可以 active 但 disabled，例如被手工启动或被其他 unit 临时拉起。
-- unit 可以 enabled 但 inactive，例如当前尚未被启动、触发条件尚未出现，或启动尝试已经失败。
-- `enabled` 的准确含义是 unit 文件已按其安装信息接入激活或依赖关系；它可能在开机、某个 target、socket、timer 或其他条件下参与激活，不应简单等同于“当前正在运行”。
+一个少见但重要的边界是：unit 已经处于 `active` 后，其磁盘定义被删除或改坏，管理员又执行了 `daemon-reload`，让 systemd 重新读取 unit 定义。管理器重新读取时，`LoadState` 可能变为 `not-found`、`bad-setting` 或 `error`，原有运行实例却仍暂时保持 `active`，磁盘上原有的启用安排也可能尚未消失。
+
+因此，`LoadState` 不是 `loaded` 时，应优先修复定义，但仍要读取 `ActiveState` 确认是否存在活动实例，并检查 `UnitFileState` 是否还能识别原有启用安排；这些结果不能反过来证明 unit 能按当前定义再次启动。查询结果与磁盘最新内容之间的关系见第四节。
 
 ### 2.1 使用 systemctl 读取这些状态
 
@@ -140,9 +165,15 @@ systemctl is-enabled UNIT_NAME
 
 - `systemctl status` 面向人工阅读，在一份摘要中显示加载状态、当前运行状态、主进程和部分近期日志等信息。
 - `systemctl is-active` 只快速查询当前运行状态。
-- `systemctl is-enabled` 只快速查询 unit 文件启用状态。
+- `systemctl is-enabled` 只快速查询 unit 文件启用状态；输出 disabled 不表示这个 unit 无法启动。
 
-需要直接读取 `LoadState`、`ActiveState`、`SubState` 和 `UnitFileState` 等属性时，第四节会使用 `systemctl show`。无论使用哪种查询方式，unit 状态都不能替代进程、监听端口或服务自身的功能验证。
+systemd 不会预先加载所有 unit，而是在需要时加载。如果 `status` 查询的 unit 尚未加载，systemd 会先查找并尝试加载它的定义，再返回查询结果。因此，这个结果只反映查询完成时的状态，不能用来判断查询前管理器是否已经持有该 unit 的定义。
+
+如果查找不到对应的定义，结果会显示 `LoadState=not-found`。它表示“systemd 已经查找，但没有找到可加载的 unit 定义”，与“定义存在，只是查询前尚未加载”不是一回事。
+
+如果管理器已经持有 unit 定义，重复执行 `status` 或 `show` 只是读取管理器当前属性，不会强制 systemd 每次都重新读取磁盘文件。
+
+前面的 `status` 适合查看状态摘要；若要直接读取 `LoadState`、`ActiveState`、`SubState`、`UnitFileState` 等具体属性，或者继续检查 `LoadError` 和 `NeedDaemonReload`，则可使用第四节介绍的 `systemctl show`。无论使用哪种查询方式，unit 状态都不能替代进程、监听端口或服务自身的功能验证。
 
 `status`、`is-active` 和 `is-enabled` 在 unit 处于 inactive、disabled、failed 或不存在等结果时可能返回非零。这不等于命令没有提供诊断价值；在普通交互式 Shell 中，非零状态默认不会自动退出当前会话，放入脚本时则必须显式处理。
 
@@ -158,7 +189,7 @@ systemctl --failed --no-pager
 
 ### 2.2 应用到 Ubuntu OpenSSH：检查完整激活链
 
-理解单个 unit 的三类状态后，还要注意一项服务能力可能由多个 unit 协作提供。Ubuntu 22.10 起，`openssh-server` 软件包默认配置为使用 systemd socket activation；Ubuntu 24.04 又调整了 `ssh.socket` 的生成方式。因此，`ssh.service` 显示 inactive 或 disabled 时，不能直接断言 SSH 入口不可用：`ssh.socket` 可能正在监听，并在连接到来时激活 `ssh.service`。
+查询某个 unit 的 `enabled`、`disabled`、`active` 或 `inactive`，只能说明这个 unit 自己的状态。若一项功能由 socket、service、timer 等多个 unit 共同提供，就必须检查整条激活链，不能只根据其中一个 unit 判断功能是否可用。Ubuntu 22.10 起，`openssh-server` 软件包默认配置为使用 systemd socket activation；Ubuntu 24.04 又调整了 `ssh.socket` 的生成方式。因此，`ssh.service` 显示 inactive 或 disabled 时，不能直接断言 SSH 入口不可用：`ssh.socket` 可能正在监听，并通过另一条激活路径在连接到来时启动 `ssh.service`。
 
 此时仍然使用前面的状态模型，但要分别查询激活链上的 socket unit 和 service unit，再结合真实监听和新客户端连接判断。具体机制见 [[OpenSSH 密钥登录、服务端配置与排查#2. 在服务端准备 sshd]]。
 
@@ -245,7 +276,17 @@ sudo journalctl -b -p warning --no-pager
 
 ## 4. 查找 unit 来源与 systemd 当前属性
 
-排查“配置从哪里加载”时，应区分磁盘文件视图和 systemd 管理器当前持有的属性。
+排查“配置从哪里加载”时，应区分磁盘文件视图和 systemd 管理器当前持有的属性。两者之间的关系可以简化为：
+
+```text
+磁盘上的 unit file 和 drop-in
+              ↓ 按需加载或 daemon-reload
+systemd 管理器当前持有的定义
+              ↓ systemctl status 或 show
+LoadState 等管理器属性
+```
+
+这里的查询只读取管理器当前视图，不会每次都重新执行上面的加载过程。
 
 **执行位置：Ubuntu Server（任意目录，只读检查）**
 
@@ -257,6 +298,8 @@ systemctl show "$UNIT_NAME" \
   -p FragmentPath \
   -p DropInPaths \
   -p LoadState \
+  -p LoadError \
+  -p NeedDaemonReload \
   -p ActiveState \
   -p SubState \
   -p UnitFileState \
@@ -268,6 +311,8 @@ systemctl show "$UNIT_NAME" \
 
 - `systemctl cat` 展示磁盘上用于组成该 unit 的主文件和 drop-in，帮助定位来源与覆盖顺序。
 - `systemctl show` 展示 systemd 管理器当前持有的属性；本文只选择排障常用字段，不代表输出了所有属性。
+- `LoadState` 是管理器当前持有的定义加载结果；加载失败时，`LoadError` 提供相应的错误信息。
+- `NeedDaemonReload=yes` 表示该 unit 的定义来源自上次读取后发生了变化，建议重新加载管理器配置；它不检查应用自身配置，也不能证明服务功能正常。
 - 如果磁盘上的 unit 文件刚被修改但尚未执行 `daemon-reload`，`cat` 可能已经看到新内容，而管理器仍按此前加载的定义工作。
 
 不要直接修改 `/usr/lib/systemd/system` 或 `/lib/systemd/system` 中由软件包管理的文件。管理员持久覆盖通常放在：
@@ -309,15 +354,35 @@ sudo journalctl -u UNIT_NAME -b -n 100 --no-pager
 
 ## 6. enable、disable 与激活关系
 
-enable/disable 主要改变 unit 文件的激活关系，与当前运行状态正交。
+第二节先解释了 enabled 和 disabled 表达什么，本节再说明这项后续启动安排怎样建立和移除。许多可直接启用的 unit 会在 unit file 的 `[Install]` 段中提供安装信息；这部分内容不由 systemd 在正常运行时直接解释，而是供 `systemctl enable` 和 `systemctl disable` 使用。
 
-| 操作 | 对 unit 文件关系的影响 | 是否同时改变当前运行状态 |
+继续使用前面的 `app.service`。它可以通过下面的安装信息说明：启用时把自己加入 `multi-user.target` 的启动集合。
+
+```ini
+[Install]
+WantedBy=multi-user.target
+```
+
+对这个 unit 执行 `systemctl enable app.service` 时，systemctl 会根据 `WantedBy=` 创建一个指向 `app.service` unit file 的符号链接。其关系可以简化为：
+
+```text
+/etc/systemd/system/multi-user.target.wants/app.service
+    → app.service 的实际 unit file
+```
+
+对这个例子来说，上述链接存在时，`app.service` 的 unit 文件启用状态为 enabled；`[Install]` 安装信息仍然存在、但上述链接不存在时，状态为 disabled。
+
+这个链接使 `multi-user.target` 获得对 `app.service` 的 `Wants` 依赖；以后激活 `multi-user.target` 时，`app.service` 会被纳入同一轮启动。systemd 正常运行时使用的是已经形成的依赖关系，不是每次都重新读取 `[Install]` 来决定是否启动。
+
+默认的系统级 enable 会把链接保存在 `/etc/systemd/system/` 下，因此重启后仍然存在；这就是第二节所说的“已经设置后续启动安排”。
+
+| 操作 | 对后续启动安排的影响 | 是否同时改变当前运行状态 |
 | --- | --- | --- |
-| `enable` | 按 unit 的安装信息创建持久激活关系 | 通常不会立即启动 |
-| `disable` | 移除相应激活关系 | 通常不会立即停止 |
-| `enable --now` | 先建立激活关系 | 同时尝试立即启动 |
+| `enable` | 按 `[Install]` 安装信息创建相应链接 | 不会因此立即启动 |
+| `disable` | 移除指向该 unit file 的相应启用链接 | 不会因此立即停止；其他路径仍可能再次激活它 |
+| `enable --now` | 先创建相应链接 | 同时尝试立即启动 |
 
-不要把 `enabled` 简写为“当前已运行”，也不要批量 enable 不理解的 unit。`static` 等状态通常表示 unit 没有可供 `enable` 直接建立的安装关系，但仍可能被其他 unit 依赖或触发；应结合 `systemctl cat` 和依赖关系判断。
+变更前应先用第四节的 `systemctl cat` 核对实际 `[Install]` 内容，再用 `systemctl is-enabled` 查询当前状态。不要把 `enabled` 简写为“当前已运行”，也不要批量 enable 不理解的 unit。`static` 等状态通常表示 unit 没有可供 `enable` 直接使用的安装信息，但仍可能被其他 unit 依赖或触发；应结合 unit 内容和实际依赖关系判断。
 
 ### 6.1 受控执行一次状态变更
 
@@ -407,21 +472,26 @@ exit "$operation_status"
 2. 检查新文件的路径、权限和内容。
 3. 在适用时对实际 unit 主文件路径使用 `systemd-analyze verify`，辅助发现 unit 文件错误；它不能替代应用配置校验或真实功能验证。
 4. 执行 `daemon-reload`，让 systemd 重新读取 unit 定义和依赖关系。
-5. 如果 `ExecStart=`、环境、权限、沙箱或其他进程属性需要作用于当前服务，评估影响后 restart。
-6. 检查 `status`、`systemctl show` 和当前启动日志，再从新的客户端路径验证。
-7. 失败时还原原 unit/drop-in，再次 `daemon-reload`；需要恢复运行进程时再 restart 并复测。
+5. 重新读取 `LoadState`、`LoadError` 和 `NeedDaemonReload`；目标 unit 的定义没有按预期加载时先停止，不继续执行 `restart`。
+6. 确认定义加载结果符合预期后，如果 `ExecStart=`、环境、权限、沙箱或其他进程属性需要作用于当前服务，再评估影响后执行 `restart`。
+7. 检查 `status`、`systemctl show` 和当前启动日志，再从新的客户端路径验证。
+8. 失败时还原原 unit/drop-in，再次 `daemon-reload` 并复核定义；需要恢复运行实例时，再评估并执行 `restart` 后复测。
 
 下面是顺序骨架，不是可直接执行的 Shell；`UNIT_FILE_PATH` 表示已经核对的实际 unit 主文件路径，`UNIT_NAME` 表示完整 unit 名称：
 
 ```text
 systemd-analyze verify UNIT_FILE_PATH
 sudo systemctl daemon-reload
-sudo systemctl restart UNIT_NAME
+systemctl show UNIT_NAME -p LoadState -p LoadError -p NeedDaemonReload
+确认上述属性符合预期
+按变更影响决定是否执行 sudo systemctl restart UNIT_NAME
 systemctl status UNIT_NAME --no-pager
 sudo journalctl -u UNIT_NAME -b -n 100 --no-pager
 ```
 
-`daemon-reload` 成功只表示 systemd 完成了定义重读，不表示服务已重启、配置符合业务预期或外部客户端已经可用。
+`daemon-reload` 成功只表示 systemd 完成了管理器配置重载，不能代替目标 unit 的加载结果检查。目标 unit 的 `LoadState` 不符合预期、`LoadError` 显示错误，或者 `NeedDaemonReload` 仍为 `yes` 时，应先查明原因。
+
+即使这些属性符合预期，也不表示服务已重启、配置符合业务预期或外部客户端已经可用。
 
 ## 8. 常见排查顺序
 
@@ -509,9 +579,9 @@ systemd-journald 进程尚未启动时，确实不能立即处理日志，但这
 ## 完成标准
 
 - [ ] 能解释 systemd、unit、unit file、service、进程、systemd-journald 与 journal 的职责边界。
-- [ ] 能区分加载状态、当前运行状态和 unit 文件启用状态。
+- [ ] 能区分加载状态、当前运行状态和 unit 文件启用状态，并说明它们不是前后置关系。
 - [ ] 能组合 unit、启动范围、数量、优先级和持续跟踪等 journal 筛选维度。
-- [ ] 能找到 unit 主文件、drop-in 与 systemd 当前持有的关键属性。
+- [ ] 能区分磁盘上的 unit 主文件和 drop-in 与 systemd 管理器当前持有的属性，并使用 `LoadError` 和 `NeedDaemonReload` 辅助判断。
 - [ ] 能解释 start、stop、restart、reload、enable、disable 和 `daemon-reload` 的不同影响。
 - [ ] 能区分应用配置变更与 unit/drop-in 变更的验证和恢复流程。
 - [ ] 能从失败状态、unit 文件启用状态和当前启动日志三个视图完成一次综合检查。
@@ -527,12 +597,13 @@ systemd-journald 进程尚未启动时，确实不能立即处理日志，但这
 
 ## 官方参考资料
 
-以下资料于 **2026-08-02** 核对：
+除特别标注外，以下资料于 **2026-08-02** 核对：
 
 - [systemd：systemctl](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html)
 - [systemd：journalctl](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html)
 - [systemd：systemd-journald.service](https://www.freedesktop.org/software/systemd/man/latest/systemd-journald.service.html)
 - [systemd：journald.conf](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)
 - [systemd：systemd.unit](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html)
+- [systemd v255：D-Bus Unit 属性](https://github.com/systemd/systemd/blob/v255/man/org.freedesktop.systemd1.xml)（2026-08-09 核对）
 - [systemd：systemd-analyze](https://www.freedesktop.org/software/systemd/man/latest/systemd-analyze.html)
 - [Ubuntu 24.04 LTS 发布说明：OpenSSH socket activation](https://documentation.ubuntu.com/release-notes/24.04/#openssh)
