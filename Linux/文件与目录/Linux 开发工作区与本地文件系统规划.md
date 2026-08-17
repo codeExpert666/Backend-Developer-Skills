@@ -1,10 +1,9 @@
 ---
 title: Linux 开发工作区与本地文件系统规划
 aliases:
-  - Linux 后端开发目录与工具链规划
   - Linux 后端开发工作区规划
-  - Ubuntu 后端工具链规划
-  - Linux 项目目录与工具链
+  - Linux 本地开发目录规划
+  - Linux 开发目录与数据边界
 tags:
   - Linux
   - Linux/文件与目录
@@ -12,33 +11,61 @@ tags:
   - 后端开发
   - 文件系统
 created: 2026-07-16T00:31:00
-updated: 2026-07-26T23:28:30
+updated: 2026-08-17T22:43:05
 ---
 
-本文解决三个问题：Linux 开发项目长期放在哪里、为什么不直接在宿主机共享目录中开发，以及怎样把源码、工具链、缓存、容器数据和备份分开管理。
+本文解决三个问题：Linux 开发项目长期放在哪里、为什么不把宿主机或网络共享目录直接当作主工作区，以及怎样按生命周期分别管理源码、工具链、缓存、配置、服务数据和备份。
 
-这里的原则适用于虚拟机、物理 Linux 开发机和远程服务器。某个项目的目录名、精确工具版本和质量门禁属于具体项目的实践基线，不应写成所有 Linux 环境的固定答案。
+本篇只讨论目录选择、文件系统边界和数据管理原则。某个项目的目录名、精确工具版本、安装步骤、构建入口和质量门禁，应由对应的工具专题或项目实践笔记负责。
 
 > [!abstract] 本篇掌握目标
-> - **必须熟练**：使用 `$HOME` 和绝对路径定位用户级工作区，把活跃仓库放在 Linux 本地文件系统，并避免用 `sudo` 进行日常构建。
-> - **理解会查**：通过 `findmnt`、`df`、`stat` 和 `namei` 核对路径所在文件系统及权限链，区分源码、工具链、缓存与服务数据。
-> - **认识即可**：共享挂载的语义差异、不同语言缓存目录和容器数据边界；遇到具体工具链时再深入。
+> - **必须熟练**：使用 `$HOME` 和绝对路径定位用户级工作区，核对路径所在的挂载点，让当前用户在不使用 `sudo` 的情况下完成日常开发。
+> - **理解会查**：解释 `findmnt` 的 `SOURCE`、`FSTYPE`、`OPTIONS` 和 `TARGET`，区分源码、生成物、工具链、缓存、配置与凭据、服务数据和备份。
+> - **认识即可**：宿主机共享挂载、网络文件系统、Docker 守护进程（daemon）数据和不同语言缓存目录的实现差异；遇到具体环境时再按实际配置核对。
 >
 > 命令学习入口见 [[Linux 命令行学习路线与命令地图]]；路径、变量和引用见 [[Shell 路径、变量、引用与展开]]，日常文件操作见 [[Linux 文件与目录常用命令]]。
 
-## 1. 首选 Linux 本地文件系统
+> [!info] 资料核对日期
+> 本文涉及 Filesystem Hierarchy Standard（文件系统层次结构标准，FHS）、`findmnt`、GNU `install`、Go Modules（Go 模块机制）、Maven 本地仓库、Docker 存储，以及 `git clone` 能够迁移哪些内容的资料，均于 **2026-08-17** 根据官方文档核对。命令的实际输出仍应以目标 Linux 主机安装的版本为准。
 
-虚拟机能访问宿主机共享目录，不代表共享目录适合长期承载活跃仓库。共享机制需要映射两套操作系统和文件系统语义，可能在以下方面出现差异：
+## 1. 先按管理者和生命周期分类
+
+规划工作区时，不要先画一棵看似整齐的目录树。先对每类内容回答四个问题：
+
+1. **谁负责写入和变更**：当前用户、包管理器、构建工具，还是长期运行的服务。
+2. **能否重新生成**：可以重新下载或构建，还是丢失后无法还原。
+3. **依赖哪些文件系统语义**：是否需要稳定的权限位、锁、链接、Unix 域套接字（Unix socket）、文件监听和大量小文件性能。
+4. **由什么机制保护**：Git、受控配置恢复、应用级备份，还是独立备份副本。
+
+常见内容可以分成以下几类：
+
+| 类型 | 常见位置或发现方式 | 主要管理者 | 丢失后的处理 |
+| --- | --- | --- | --- |
+| 项目源码与工作树 | `$HOME/src/$PROJECT_NAME` | 当前用户与 Git | 已提交并推送的内容可从远端恢复；本地修改需另行保护 |
+| 构建产物与测试输出 | 项目约定的 `target/`、`build/`、`bin/` 等 | 构建工具 | 通常可重新生成，但应先确认是否混有日志或人工产物 |
+| 语言工具链 | 包管理器、`/usr/local`、`/usr/lib/jvm` 或版本管理器决定的位置 | 系统管理员或版本管理器 | 按已记录版本和安装方法重建 |
+| 依赖与构建缓存 | `go env`、Maven `settings.xml` 等工具配置显示的位置 | 对应构建工具 | 通常可重新下载，但会消耗网络和时间 |
+| 用户配置与凭据 | `$HOME/.gitconfig`、`$HOME/.ssh`、`$HOME/.docker`、Maven `settings.xml` 等 | 当前用户与对应工具 | 需要受控恢复；不得混入公开源码或普通日志 |
+| 服务数据 | Docker 卷（volume）、数据库、用户上传目录等项目明确的位置 | 守护进程、数据库或应用 | 通常不可仅靠重新构建恢复，需要应用级备份 |
+| 备份与导出 | 独立磁盘、备份系统或其他故障域 | 备份流程 | 只有具备保留策略并完成恢复验证，才算有效保护 |
+
+`$HOME/src` 是本篇建议主动建立的源码根目录。其他位置应通过工具、配置和服务实际状态发现，不要为了匹配示意结构而手工创建 `$HOME/go`、`$HOME/.m2`、`$HOME/.docker` 或 `$HOME/.ssh`。
+
+## 2. 活跃仓库默认放在 Linux 本地文件系统
+
+本篇所说的“Linux 本地文件系统”，是指由目标 Linux 主机的本地磁盘或虚拟磁盘直接承载并管理的文件系统。目录位于 Linux 路径树中，不等于它一定是本地存储；`$HOME` 也可能位于网络文件系统或宿主机共享挂载上。
+
+虚拟机能访问宿主机共享目录，不代表共享目录适合长期承载活跃仓库。宿主机共享挂载或网络文件系统需要跨越额外的协议和实现边界，可能在以下方面表现不同：
 
 - 文件所有者、用户组和权限位。
-- 大小写敏感性与文件名规范。
+- 大小写敏感性与文件名规则。
 - 符号链接、硬链接和 Unix socket。
 - Git 索引、锁文件和可执行位。
-- `inotify` 等文件监听机制。
+- Linux 文件事件通知机制 `inotify` 等文件监听能力。
 - 大量小文件、依赖缓存和编译输出性能。
-- Docker bind mount 和数据库数据一致性。
+- 容器绑定挂载（bind mount）与数据库写入语义。
 
-后端项目会频繁读写 `.git/objects`、Go module 缓存、Maven 本地仓库、编译产物、测试报告、容器构建上下文和 IDE 索引。主工作区因此应位于 Linux 自己管理的本地文件系统。
+后端项目会频繁读写 `.git/objects`、依赖缓存、编译产物、测试报告、容器构建上下文和集成开发环境（Integrated Development Environment，IDE）索引。主工作区因此默认放在 Linux 本地文件系统：
 
 ```text
 宿主机终端或 IDE
@@ -47,281 +74,332 @@ updated: 2026-07-26T23:28:30
          -> 本地文件系统中的 $HOME/src
 ```
 
-共享目录适合：
+两类位置的职责不同：
 
-- 临时导入安装包、归档或补丁。
-- 把构建报告、日志或导出文件传回宿主机。
-- 迁移前后的受控交换。
+| 位置 | 适合承载 | 不应默认承载 |
+| --- | --- | --- |
+| Linux 本地文件系统 | 活跃 Git 工作树、构建输出、需要稳定监听的源码树 | 唯一备份副本 |
+| 宿主机或网络共享目录 | 安装包、归档、补丁、报告和受控迁移介质 | 活跃工作树、数据库数据目录、Docker 卷的替代目录 |
 
-共享目录不适合：
+共享目录不是绝对不能用于开发。如果团队有意使用经过验证的远程开发文件系统，应先验证权限、链接、锁、文件监听、大小写规则、性能和备份边界，再把它记录为该环境的明确例外，而不是根据目录名称直接假定可用。
 
-- 长期活跃 Git 工作树。
-- 数据库数据目录。
-- Docker volume 的替代目录。
-- 需要稳定文件监听的源码树。
-- 唯一备份副本。
+## 3. 核对并解释路径所在的挂载点
 
-## 2. 不根据目录名猜测挂载类型
+先让 Linux 显示 `$HOME` 实际位于哪个挂载点。显式指定输出列，可以避免依赖 `findmnt` 可能变化的默认输出格式。
 
-让 Linux 显示目标路径真实位于哪个挂载点。
-
-**执行位置：Linux 开发机（任意目录）**
+**执行位置：Linux 开发机（任意目录，只读）**
 
 ```bash
-findmnt --target "$HOME"
+findmnt -o SOURCE,FSTYPE,OPTIONS,TARGET --target "$HOME"
 df -hT "$HOME"
 stat -f -c 'filesystem_type=%T path=%n' "$HOME"
 ```
 
-准备工作区后继续检查：
+准备好工作区后，再核对最终路径：
 
-**执行位置：Linux 开发机（任意目录）**
+**执行位置：Linux 开发机（任意目录，只读）**
 
 ```bash
-findmnt --target "$HOME/src"
-df -hT "$HOME/src"
-namei -l "$HOME/src"
+if [ -d "$HOME/src" ]; then
+  findmnt -o SOURCE,FSTYPE,OPTIONS,TARGET --target "$HOME/src"
+  df -hT "$HOME/src"
+  namei -l "$HOME/src"
+else
+  printf '%s\n' 'SKIP: $HOME/src 尚未建立。'
+fi
 ```
 
-本地 Ubuntu 常见 ext4，但不能把文件系统类型或设备名写死。判断依据是挂载来源和你实际采用的虚拟磁盘布局，而不是目录恰好叫 `src`。
+重点解释以下字段：
 
-## 3. 建立用户级源码根目录
+| 字段或命令 | 回答的问题 | 不能单独证明什么 |
+| --- | --- | --- |
+| `SOURCE` | 当前文件系统来自哪个设备、远端或虚拟来源 | 只看名称不能确定虚拟化平台中的全部实现细节 |
+| `FSTYPE` | 内核把它识别成哪类文件系统 | 不能仅凭某个类型名称证明性能和语义完全符合项目要求 |
+| `OPTIONS` | 当前挂载是否可写，以及是否存在只读标记 `ro`、禁止执行标记 `noexec` 等约束 | 不能代替用户权限、访问控制列表（ACL）和安全模块检查 |
+| `TARGET` | 哪个挂载点覆盖了当前路径 | 目录名本身不代表挂载类型 |
+| `df -hT` | 文件系统类型、总量和剩余容量 | 不说明某个目录自身占用了多少空间 |
+| `namei -l` | 路径每一级目录的所有者和权限模式（mode） | 不替代对 ACL、挂载选项或实际访问的进一步检查 |
 
-个人开发机可以统一使用 `$HOME/src`：
+本地 Ubuntu 常见 ext4，但不能把文件系统类型或设备名写成固定答案。若 `SOURCE`、`FSTYPE` 或虚拟机配置表明路径来自宿主机共享或网络挂载，应把它视为需要额外验证的边界；若 `OPTIONS` 中出现 `ro`，则当前挂载本身不可写。
+
+## 4. 建立并验证用户级源码根目录
+
+个人开发机可以把 `$HOME/src` 作为统一源码根目录：
 
 - 当前用户天然拥有主目录。
 - Git、构建和测试不需要 `sudo`。
 - 路径与编程语言无关。
-- 源码与系统软件、部署目录保持边界。
+- 源码与系统软件、部署目录和服务数据保持边界。
 
-这是一项开发约定，不是 Linux 强制标准。多人共享机器应结合组织的用户、组和权限模型重新规划。
+这是一项开发约定，不是 Linux 强制标准。多人共享机器需要重新设计用户、组、目录写权限和继承规则，不能直接把个人方案扩展成共享方案。
 
-**执行位置：Linux 开发机（任意目录）**
+先检查目标；若目录已经存在，只报告现状，不自动重设权限。下面的创建分支把个人工作区设为 `0700`，即只有当前用户可以读取、写入和进入。
+
+**执行位置：Linux 开发机（任意目录；可能新建 `$HOME/src`）**
 
 ```bash
-install -d -m 0750 "$HOME/src"
-stat -c 'owner=%U group=%G mode=%a path=%n' "$HOME/src"
-test -r "$HOME/src"
-test -w "$HOME/src"
-test -x "$HOME/src"
-findmnt --target "$HOME/src"
+(
+WORKSPACE_ROOT="$HOME/src"
+
+if [ -L "$WORKSPACE_ROOT" ]; then
+  printf '停止：工作区根目录是符号链接，请先核对其真实目标：%s\n' \
+    "$WORKSPACE_ROOT" >&2
+  exit 1
+fi
+
+if [ -e "$WORKSPACE_ROOT" ]; then
+  if [ ! -d "$WORKSPACE_ROOT" ]; then
+    printf '停止：目标已存在但不是目录：%s\n' "$WORKSPACE_ROOT" >&2
+    exit 1
+  fi
+  printf 'INFO: 沿用已有目录，不修改其权限：%s\n' "$WORKSPACE_ROOT"
+else
+  if install -d -m 0700 -- "$WORKSPACE_ROOT"; then
+    printf 'PASS: 已创建个人工作区：%s\n' "$WORKSPACE_ROOT"
+  else
+    printf 'FAIL: 无法创建个人工作区：%s\n' "$WORKSPACE_ROOT" >&2
+    exit 1
+  fi
+fi
+
+stat -c 'owner=%U group=%G mode=%a path=%n' "$WORKSPACE_ROOT"
+
+if test -r "$WORKSPACE_ROOT" &&
+   test -w "$WORKSPACE_ROOT" &&
+   test -x "$WORKSPACE_ROOT"; then
+  printf '%s\n' 'PASS: 当前用户可以读取、写入并进入工作区。'
+else
+  printf '%s\n' 'FAIL: 当前用户缺少工作区所需权限。' >&2
+  exit 1
+fi
+
+findmnt -o SOURCE,FSTYPE,OPTIONS,TARGET --target "$WORKSPACE_ROOT"
+)
 ```
 
-`test -r`、`test -w` 和 `test -x` 分别从当前执行身份的视角检查可读、可写和可进入；命令通常没有输出，应通过退出状态判断结果，详见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
+`install -d -m 0700` 在创建目标目录的同时显式设置权限模式；前面的存在性检查确保它不会顺带改写已有目录的权限。`test -r`、`test -w` 和 `test -x` 从当前执行身份的视角检查可读、可写和可进入，详见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
-`0750` 表示当前用户可读、写、进入，同组用户可读、进入，其他用户无权限。仅个人使用且无需同组访问时，可以选择 `0700`。
+`0700` 是个人工作区的保守默认值；只有确实需要同组读取时才考虑 `0750`。需要多人共同写入时，还要设计组成员、组写权限、setgid（组继承）或 ACL，具体判断见 [[Linux 用户、用户组、sudo 与文件权限]]。
 
 不要把个人活跃仓库默认放到：
 
 | 路径 | 不适合作为个人工作区的原因 |
 | --- | --- |
 | `/root` | 只属于 root，日常开发会被迫提权 |
-| `/usr/local/src` | 更偏向系统管理员维护的本地源码 |
-| `/opt` | 常用于可选软件安装 |
+| `/usr/local/src` | 属于系统级本地层次，通常由管理员维护 |
+| `/opt` | 常用于安装可选应用软件 |
 | `/srv` | 常用于服务对外提供的数据 |
 | `/tmp` | 生命周期和清理策略不适合作为长期源码 |
 
-## 4. 使用变量表达项目目录
+## 5. 把项目放入工作区
 
-**执行位置：Linux 开发机（任意目录）**
+若准备执行 `git clone`，通常只建立 `$HOME/src`，让 Git 创建最终项目目录。若要创建非 Git 工作目录，可以输入一层项目名，再拒绝覆盖已有对象：
+
+**执行位置：Linux 开发机（已确认 `$HOME/src` 可用；会创建输入的项目目录）**
 
 ```bash
 (
-printf '请输入项目目录名：'
+WORKSPACE_ROOT="$HOME/src"
+printf '请输入一层项目目录名：'
 IFS= read -r PROJECT_NAME
 
 case "$PROJECT_NAME" in
   ''|*/*|.|..)
-    printf '%s\n' '停止：目录名不能为空、不能包含斜杠，也不能是点目录。' >&2
+    printf '%s\n' \
+      '停止：目录名不能为空、不能包含斜杠，也不能是点目录。' >&2
     exit 1
     ;;
 esac
 
-PROJECT_DIR="$HOME/src/$PROJECT_NAME"
+PROJECT_DIR="$WORKSPACE_ROOT/$PROJECT_NAME"
 
-if [ -e "$PROJECT_DIR" ]; then
-  printf '停止：目标已经存在：%s\n' "$PROJECT_DIR" >&2
+if [ ! -d "$WORKSPACE_ROOT" ] || [ -L "$WORKSPACE_ROOT" ]; then
+  printf '停止：工作区根目录不存在或是符号链接：%s\n' \
+    "$WORKSPACE_ROOT" >&2
   exit 1
 fi
 
-install -d -m 0750 "$PROJECT_DIR"
-printf 'project_dir=%s\n' "$PROJECT_DIR"
+if [ -e "$PROJECT_DIR" ] || [ -L "$PROJECT_DIR" ]; then
+  printf '停止：项目目录已经存在：%s\n' "$PROJECT_DIR" >&2
+  exit 1
+fi
+
+if ! install -d -m 0700 -- "$PROJECT_DIR"; then
+  printf 'FAIL: 无法创建项目目录：%s\n' "$PROJECT_DIR" >&2
+  exit 1
+fi
+
+stat -c 'owner=%U group=%G mode=%a path=%n' "$PROJECT_DIR"
+findmnt -o SOURCE,FSTYPE,OPTIONS,TARGET --target "$PROJECT_DIR"
 )
 ```
 
-最外层圆括号让输入无效时的 `exit` 只停止这个代码块，不会结束当前登录 Shell。
+已有 Git 仓库应根据源仓库的远端、分支、提交和工作区状态，选择全新克隆（fresh clone）、`git bundle` 归档、补丁文件（patch）或受控复制，完整流程见 [[Git 仓库跨机器迁移与工作区保留]]。
 
-若下一步准备 `git clone`，通常只创建 `$HOME/src`，让 Git 创建最终项目目录即可。上面的命令更适合创建非 Git 工作目录或迁移暂存目录。
+无论采用哪种迁入方式，都要对最终项目目录重新运行 `findmnt --target`；上面的非 Git 目录示例已经在变量仍然有效时完成了这项检查。检查目标是确认项目目录没有通过符号链接或子挂载离开预期的本地文件系统。共享目录只承担交换作用，源副本应保留到目标工作区完成 Git 状态核对、项目验证和备份确认。
 
-推荐的通用结构：
+## 6. 发现工具链、缓存、配置和服务数据
 
-```text
-$HOME/
-├── src/
-│   ├── project-a/
-│   └── project-b/
-├── go/
-│   ├── bin/
-│   └── pkg/mod/
-├── .cache/
-│   └── go-build/
-├── .m2/
-│   ├── repository/
-│   └── wrapper/
-├── .docker/
-├── .gitconfig
-└── .ssh/
-```
+工具链、缓存和服务数据的位置应以工具的实际配置为准，不根据示意目录猜测。下面用 `PASS` 表示成功读取，`SKIP` 表示当前环境不适用，`FAIL` 表示命令存在但检查失败；`PATH` 是 Shell 查找命令时使用的搜索路径。
 
-现代 Go Modules 项目不要求位于 `$HOME/go/src`。源码可以统一放 `$HOME/src`，`GOPATH` 和各种缓存目录继续由工具链管理。
-
-## 5. 区分源码、工具链、缓存和服务数据
-
-| 类型 | 常见位置 | 管理原则 |
-| --- | --- | --- |
-| 项目源码 | `$HOME/src/$PROJECT_NAME` | Git 与当前用户管理 |
-| Go 工具链 | `/usr/local/go` 或发行版目录 | 系统级安装，普通用户只读执行 |
-| Go module 与构建缓存 | `go env GOMODCACHE GOCACHE` | 可再生，但清理前先评估下载成本 |
-| JDK | `/usr/lib/jvm` 等 | APT 或批准的版本管理方式 |
-| Maven 本地仓库 | `$HOME/.m2/repository` | 用户缓存，不等于源码备份 |
-| Docker CLI 配置 | `$HOME/.docker` | 可能包含 context 或认证信息，应保护权限 |
-| Docker daemon 数据 | `docker info` 显示的 Docker Root Dir | 由 daemon 管理，不手工移动单个子目录 |
-| 应用数据库 | 项目明确的数据目录或 volume | 需要独立逻辑备份与恢复方法 |
-
-检查真实位置：
-
-**执行位置：Linux 开发机（任意目录）**
+**执行位置：Linux 开发机（任意目录；只读取工具状态）**
 
 ```bash
-go env GOPATH GOMODCACHE GOCACHE 2>/dev/null || true
-mvn -version 2>/dev/null || true
-docker info --format '{{.DockerRootDir}}' 2>/dev/null || true
+if command -v go >/dev/null 2>&1; then
+  if go env GOPATH GOMODCACHE GOCACHE; then
+    printf '%s\n' 'Go: PASS'
+  else
+    printf '%s\n' 'Go: FAIL，无法读取 Go 环境。' >&2
+  fi
+else
+  printf '%s\n' 'Go: SKIP，当前 PATH 中没有 go。'
+fi
+
+if command -v mvn >/dev/null 2>&1; then
+  if mvn -version; then
+    if [ -f "$HOME/.m2/settings.xml" ]; then
+      printf '%s\n' \
+        'Maven: INFO，存在用户 settings.xml；本地仓库位置可能被覆盖。'
+    else
+      printf '%s\n' \
+        'Maven: INFO，未发现用户 settings.xml；仍需检查全局 settings.xml 和项目启动参数。'
+    fi
+  else
+    printf '%s\n' 'Maven: FAIL，命令存在但无法正常读取版本。' >&2
+  fi
+else
+  printf '%s\n' 'Maven: SKIP，当前 PATH 中没有 mvn。'
+fi
+
+if command -v docker >/dev/null 2>&1; then
+  if DOCKER_ROOT="$(docker info --format '{{.DockerRootDir}}')"; then
+    printf 'Docker: PASS，daemon_data=%s\n' "$DOCKER_ROOT"
+  else
+    printf '%s\n' \
+      'Docker: FAIL，CLI 存在，但无法读取 daemon 状态或当前身份无权访问。' >&2
+  fi
+else
+  printf '%s\n' 'Docker: SKIP，当前 PATH 中没有 docker。'
+fi
 ```
 
-缓存可以重新生成，但会消耗网络和时间；数据库与用户上传文件通常不可简单重建。两者不能采用相同清理策略。
+这些结果需要按边界解释：
 
-## 6. 工具角色与边界
+- `go env` 输出的是当前 Go 环境实际采用的工作区与缓存位置；现代 Go Modules 项目不要求位于 `$HOME/go/src`。
+- `mvn -version` 只确认 Maven、Java 和 Maven 安装目录（Maven home），不会显示本地仓库。Maven 默认使用 `$HOME/.m2/repository`，但用户或全局 `settings.xml`、`-Dmaven.repo.local` 和项目入口都可能覆盖它。
+- `$HOME/.docker` 是 Docker 命令行客户端（Command-Line Interface，CLI）的用户配置位置，可能包含上下文（context）和认证信息；Docker 守护进程负责管理镜像、容器和卷数据。
+- Docker 卷、绑定挂载和容器可写层不是同一种存储。不要把共享目录中的普通文件夹当成 Docker 管理的卷，也不要手工移动守护进程数据目录中的单个子目录。
+- `$HOME/.ssh`、Maven settings.xml 和 Docker 用户配置可能包含敏感信息。检查时只确认路径、权限和所需字段，不把完整内容复制到日志或公开笔记。
 
-| 工具 | 负责什么 | 不代表什么 |
+## 7. 维护容量并建立保护边界
+
+先识别空间增长发生在哪一层，再决定是否清理。
+
+**执行位置：Linux 开发机（任意目录，只读）**
+
+```bash
+df -hT "$HOME"
+
+for CHECK_PATH in "$HOME/src" "$HOME/.m2" "$HOME/go" "$HOME/.cache"; do
+  if [ -e "$CHECK_PATH" ]; then
+    if ! du -sh -- "$CHECK_PATH"; then
+      printf 'FAIL: 无法统计目录：%s\n' "$CHECK_PATH" >&2
+    fi
+  else
+    printf 'SKIP: 路径不存在：%s\n' "$CHECK_PATH"
+  fi
+done
+
+if command -v docker >/dev/null 2>&1; then
+  if ! docker system df; then
+    printf '%s\n' 'FAIL: 无法读取 Docker 空间占用。' >&2
+  fi
+else
+  printf '%s\n' 'Docker: SKIP，当前 PATH 中没有 docker。'
+fi
+```
+
+根据增长来源选择处理方式：
+
+- 源码目录异常大：检查构建产物、日志、数据库、用户上传文件和未忽略文件。
+- Maven 或 Go 缓存较大：评估重新下载成本后，使用工具支持的清理方法。
+- Docker 占用较大：先区分镜像、已停止容器、构建缓存、卷和绑定挂载。
+- 虚拟机宿主磁盘紧张：同时检查客户机文件系统占用和虚拟磁盘的实际增长。
+
+> [!warning] 不要为了腾空间盲目执行全局清理
+> Docker 卷、数据库目录、被忽略文件和本地配置可能包含不可重建数据。清理前必须确认对象、影响范围、备份和恢复方法。
+
+不同内容需要不同保护层：
+
+| 内容 | 合适的保护方式 | 不能误认为 |
 | --- | --- | --- |
-| Git | 提交历史、分支和远程协作 | 不自动保存未提交或被忽略文件 |
-| Go 工具链 | Go 编译、测试、格式化和 module | 不等于容器中的 Go 构建阶段 |
-| JDK | JVM、`java`、`javac` 等 | 只装 JRE 不足以编译 |
-| Maven / Wrapper | Java 依赖与构建生命周期 | Wrapper 不会替你安装 JDK |
-| Docker CLI | 向 Docker daemon 发请求 | CLI 存在不代表 daemon 正常 |
-| Docker daemon | 镜像、容器、网络和 volume | 不是当前 Shell 的普通前台进程 |
-| Compose plugin | 解析并编排多服务配置 | 配置解析成功不等于服务健康 |
+| 已提交并推送的源码历史 | Git 远端、Git 镜像副本或其他 Git 级副本 | 已自动保护未提交、未跟踪和被忽略文件 |
+| 本地工作现场与敏感配置 | 按敏感度建立受控副本或可重建清单 | 可以直接提交到公开仓库 |
+| 依赖与构建缓存 | 通常记录来源和重建方法，不必常规备份 | 清理没有网络、时间和可用性成本 |
+| 数据库、上传文件和卷 | 应用或数据库支持的备份，并验证恢复 | 复制源码或重建镜像即可恢复 |
+| 虚拟机快照 | 短期回退和变更前保护 | 独立故障域中的长期备份 |
+| 独立备份 | 保留策略、完整性检查和恢复演练 | 只要文件存在就一定可恢复 |
 
-具体安装由各专题负责：
+Git 仓库迁移与工作现场保护见 [[Git 仓库跨机器迁移与工作区保留]]；虚拟机快照和独立备份的区别见 [[UTM 虚拟机快照、备份与恢复]]。
 
-- Git：[[Git 安装与初始配置概览]]、[[Ubuntu 从零安装 Git]]。
-- Go：[[Ubuntu 安装 Go]]。
-- Java：[[Java 与 Maven 环境搭建概览]]、[[Ubuntu 安装 Java 与 Maven]]。
-- Docker：[[Docker 安装概览]]、[[Ubuntu 安装 Docker]]。
+## 8. 常见问题与恢复顺序
 
-项目约束永远优先于通用笔记中的示例。先读取仓库的 README、CI、Makefile、`go.mod`、`pom.xml` 和 Wrapper，再决定版本与入口。
-
-## 7. 原生运行与容器运行
-
-原生构建与容器构建验证的边界不同：
-
-| 方式 | 主要验证 | 不能单独证明 |
+| 现象 | 优先检查 | 安全处理 |
 | --- | --- | --- |
-| Linux 原生构建 | 本地语言工具链、源码、依赖解析 | Dockerfile、容器网络和镜像架构 |
-| Docker 镜像构建 | Dockerfile、构建上下文、基础镜像 | 服务已启动、数据库可用 |
-| Compose 静态解析 | 配置语法、变量展开、服务定义 | daemon 正常、容器健康、端口可用 |
-| Compose 实际启动 | 多服务运行、网络、依赖和健康检查 | 生产安全、容量和可恢复性 |
+| 文件修改监听不稳定 | 项目是否位于宿主机或网络共享挂载 | 复制到新的 Linux 本地暂存目录，验证后再切换 |
+| Git 报所有权或安全目录异常 | `stat`、`namei`、挂载来源和迁入方式 | 修复明确目标的所有者，不放宽全局权限 |
+| 日常构建必须使用 `sudo` 才成功 | 工作区、缓存或构建产物是否由 root 创建 | 先停止导致所有者错误的操作，再做最小范围修复 |
+| `findmnt` 显示只读或出现禁止执行标记 `noexec` | `OPTIONS` 和真正需要执行的路径 | 先确认挂载设计，不用 `chmod 777` 掩盖挂载问题 |
+| 磁盘持续增长 | 源码、缓存、镜像、卷、数据库和日志 | 分层审计，不删除未知数据 |
+| 想撤销目录规划 | 是否有未推送、未提交或未备份内容 | 先建立可恢复副本，再复制、验证和切换 |
 
-开发环境可以同时保留原生工具链和容器能力。不要因为镜像能构建，就跳过项目要求的本地 Go/JDK 版本核对；也不要因为原生测试通过，就宣称容器发布链路已经成立。
+权限问题按以下顺序收集证据：
 
-## 8. 迁入项目时保持可追溯
-
-项目进入 `$HOME/src` 的常见方式：
-
-1. fresh clone 远端已保存的提交。
-2. 用 Git bundle 搬运未推送提交。
-3. 用 patch 搬运可审查修改。
-4. 用受控 `rsync` 迁移完整工作现场。
-
-完整选择和恢复方法见 [[Git 仓库跨机器迁移与工作区保留]]。
-
-共享目录只作为交换区时，建议：
-
-- 先在目标端创建全新暂存目录。
-- 迁移前冻结源工作区或生成不可变归档。
-- 不在第一次复制时使用 `--delete`。
-- 复制后核对 Git 状态、SHA、隐藏文件和权限。
-- 验证通过后才切换为正式目录。
-- 保留源目录直到目标完成构建和备份。
-
-EventHub 工程化第 1 阶段的实际目录、版本和迁移选择见 [[EventHub 工程化第 1 阶段环境与版本基线]] 与 [[EventHub 仓库迁移与首次质量门禁]]。
-
-## 9. 日常权限原则
-
-- Git、Go、Maven 和项目构建不使用 `sudo`。
-- 系统包、`/usr/local` 工具链和 systemd 服务由管理员权限管理。
-- 不用 `chmod -R 777` 解决工作区权限问题。
-- 不对未知目录执行递归 `chown`。
-- 先用 `namei -l`、`stat` 和 `findmnt` 找到真正阻塞的目录层级。
-
-**执行位置：Linux 开发机（任意目录）**
+**执行位置：Linux 开发机（工作区已存在；只读）**
 
 ```bash
 namei -l "$HOME/src"
 stat -c '%U:%G %a %n' "$HOME" "$HOME/src"
-find "$HOME/src" -xdev -not -user "$USER" -print
+find "$HOME/src" -xdev -not -uid "$(id -u)" \
+  -printf '%u:%g %m %p\n'
+findmnt -o SOURCE,FSTYPE,OPTIONS,TARGET --target "$HOME/src"
 ```
 
-若发现异常所有者，先判断文件是否来自共享挂载、容器或曾经误用 `sudo`，再按 [[Linux 用户、用户组、sudo 与文件权限]] 做最小范围修复。
-
-## 10. 磁盘与缓存维护
-
-**执行位置：Linux 开发机（任意目录）**
-
-```bash
-df -hT "$HOME"
-du -sh "$HOME/src" 2>/dev/null || true
-du -sh "$HOME/.m2" 2>/dev/null || true
-du -sh "$HOME/go" 2>/dev/null || true
-du -sh "$HOME/.cache" 2>/dev/null || true
-docker system df 2>/dev/null || true
-```
-
-先识别增长来源，再决定清理：
-
-- 源码目录异常大：检查构建产物、日志、数据库和未忽略文件。
-- Maven/Go 缓存大：评估重新下载成本后使用工具提供的清理方法。
-- Docker 占用大：先区分镜像、容器、构建缓存和 volume。
-- VM 宿主磁盘紧张：同时检查客户机内部占用和稀疏磁盘实际增长。
-
-> [!warning] 不要为了腾空间盲目运行全局清理
-> Docker volume、数据库目录和被忽略文件可能包含不可重建数据。清理前先确认内容、备份和恢复方法。
-
-## 11. 常见问题与恢复
-
-| 现象 | 优先检查 | 处理 |
-| --- | --- | --- |
-| 文件修改监听不稳定 | 项目是否位于共享挂载 | 迁移到 Linux 本地暂存目录并重新验证 |
-| Git 报所有权异常 | `stat`、`namei`、复制方式 | 修正明确目标的所有者，不放宽全局权限 |
-| 命令存在但版本不对 | `type -a`、`PATH`、Shell 启动文件 | 按工具专题修正路径优先级 |
-| Docker CLI 正常但不能运行容器 | daemon、context、socket 权限 | 阅读 [[Ubuntu 安装 Docker]]，不要改 socket 为全局可写 |
-| 磁盘持续增长 | 缓存、镜像、volume、数据库、日志 | 分层审计，不删除未知数据 |
-| 想撤销目录规划 | 是否已有未推送或未提交内容 | 先按 Git 迁移方法建立可恢复副本，再移动或归档 |
+先判断异常对象来自共享挂载、容器写入、迁移过程还是曾经误用 `sudo`，再按 [[Linux 用户、用户组、sudo 与文件权限]] 修复最小范围。移动重要工作区时采用“复制到新目录 → 核对 Git 与数据状态 → 运行项目验证 → 确认备份 → 切换”的顺序，不直接覆盖原目录，也不在首次复制时使用无边界删除选项。
 
 ## 完成标准
 
-- [ ] 活跃仓库位于 Linux 本地文件系统。
-- [ ] 当前用户可读写工作区，日常构建不依赖 `sudo`。
-- [ ] 能区分源码、工具链、缓存、Docker 数据和数据库。
-- [ ] 能解释原生构建、镜像构建、Compose 静态解析和实际启动的边界。
-- [ ] 共享目录只作为受控交换区。
-- [ ] 项目迁移后核对了远程、分支、SHA、状态和质量门禁。
-- [ ] 清楚 VM 快照、Git 备份和数据库备份不是同一保护层。
+- [ ] 能按管理者、可重建性、文件系统语义和保护方式对开发数据分类。
+- [ ] 活跃仓库位于 Linux 本地文件系统，或已经记录并验证共享文件系统例外。
+- [ ] 能解释 `findmnt` 的 `SOURCE`、`FSTYPE`、`OPTIONS` 和 `TARGET`。
+- [ ] 当前用户可以读取、写入并进入工作区，日常 Git 和构建不依赖 `sudo`。
+- [ ] 知道 `$HOME/src` 是工作区约定，工具链、缓存和服务数据位置应从实际配置发现。
+- [ ] 共享目录只作为受控交换区，不承担唯一副本或默认服务数据目录。
+- [ ] 能区分 Git 远端、缓存重建、应用数据备份、虚拟机快照和独立备份。
+- [ ] 清理或迁移前会先确认范围、不可重建内容和恢复方法。
+
+## 相关笔记
+
+- [[Linux 命令行学习路线与命令地图]]
+- [[Linux 文件与目录常用命令]]
+- [[Linux 用户、用户组、sudo 与文件权限]]
+- [[Linux 磁盘、分区、文件系统与 LVM 基础]]
+- [[Git 仓库跨机器迁移与工作区保留]]
+- [[Git 安装与初始配置概览]]
+- [[Ubuntu 安装 Go]]
+- [[Java 与 Maven 环境搭建概览]]
+- [[Docker 安装概览]]
+- [[UTM 虚拟机快照、备份与恢复]]
 
 ## 官方参考资料
 
-- [Filesystem Hierarchy Standard](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/index.html)
+以下资料于 **2026-08-17** 核对：
+
+- [Filesystem Hierarchy Standard 3.0](https://refspecs.linuxfoundation.org/FHS_3.0/fhs/index.html)
 - [util-linux：findmnt 手册源文件](https://github.com/util-linux/util-linux/blob/master/misc-utils/findmnt.8.adoc)
-- [GNU Coreutils：Directory Setuid and Setgid](https://www.gnu.org/software/coreutils/manual/html_node/Directory-Setuid-and-Setgid.html)
-- [Go：Managing source code](https://go.dev/doc/modules/managing-source)
-- [Docker：Storage overview](https://docs.docker.com/engine/storage/)
+- [GNU Coreutils：install](https://www.gnu.org/software/coreutils/install)
+- [Go：Managing module source](https://go.dev/doc/modules/managing-source)
+- [Maven：Settings Reference](https://maven.apache.org/settings.html)
+- [Maven：Local Repositories](https://maven.apache.org/repositories/local.html)
+- [Docker：Storage](https://docs.docker.com/engine/storage/)
+- [Git：git-clone](https://git-scm.com/docs/git-clone)
