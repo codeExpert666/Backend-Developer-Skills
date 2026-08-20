@@ -11,7 +11,7 @@ tags:
   - Bash
   - 文件系统
 created: 2026-07-19T23:47:26
-updated: 2026-08-20T21:37:50
+updated: 2026-08-20T22:01:44
 ---
 
 本文建立一套处理文件与目录的最小工作流：先定位当前上下文并只读核对目标，再执行最小范围的创建、复制、移动或删除，随后验证结果；若中途失败，则保留现场并判断恢复方式。目标不是背完所有参数，而是能够安全完成日常操作，并在忘记选项时知道怎样查证。
@@ -374,7 +374,7 @@ touch 文件路径
 
 ### 5.3 移动或重命名
 
-`mv` 可以重命名，也可以把对象移动到另一个目录；操作成功后，源对象不再保留在原路径。移动目录不需要递归选项，普通写法移动符号链接时，移动的是链接本身。
+`mv` 可以重命名，也可以把对象移动到另一个目录；操作成功后，源对象不再保留在原路径。`mv` 移动目录时不需要递归选项，它移动的是整个目录对象，而无需由用户指定逐层处理其中的内容。相比之下，`cp` 复制目录和 `rm` 删除非空目录才需要递归选项。以符号链接作为源路径时，普通 `mv` 移动的是链接本身，不会移动链接指向的真实对象；若链接保存的是相对路径，移动后还可能因所在位置改变而失效。
 
 | 目的 | 示例 | 结果 |
 | --- | --- | --- |
@@ -390,22 +390,18 @@ touch 文件路径
 
 ### 5.4 删除明确目标
 
-`rm` 删除文件或符号链接，默认不能删除目录；`rmdir` 只删除空目录，可以把“目录必须为空”作为保护条件；`rm -r` 会递归进入并删除整个目录树，影响范围明显更大。
+`rm` 删除文件或符号链接；删除符号链接本身不会删除它指向的对象。`rm` 默认不能删除目录，空目录优先使用 `rmdir`，只有确实需要删除整个目录树时才使用 `rm -r`。
 
-删除不存在通用的命令级回滚。恢复通常依赖备份、版本控制、快照或应用自身的恢复机制，因此恢复能力必须在删除前建立，而不是删除后补救。
+| 目的 | 示例 | 结果 |
+| --- | --- | --- |
+| 删除文件或符号链接 | `rm -- report.txt` | 删除指定目录项；链接指向的对象不受影响 |
+| 删除空目录 | `rmdir -- empty-dir` | 目录非空时失败并保留目录 |
+| 删除整个目录树 | `rm -r -- cache-dir` | 递归删除目录及其全部内容 |
 
 > [!warning] `rm` 默认不会进入回收站
-> 在服务器终端中，删除通常不可直接撤销。不要对尚未展开确认的变量、通配符、`/`、`$HOME` 或陌生目录运行递归删除。先用 `printf '%q\n' "$TARGET"`、`ls -ld -- "$TARGET"` 和 `find "$TARGET" -maxdepth 2 -print` 核对目标；确认存在有效备份或目标确实可重建后，再执行最小范围删除。
+> 删除通常不能直接撤销，恢复依赖事先准备的备份、版本控制、快照或重建方式。执行前先用 `pwd` 和 `ls -ld -- 目标路径` 核对位置与对象；递归删除前再用 `find 目录路径 -maxdepth 2 -print` 查看范围，确认无误后才执行最小范围的命令。
 
-完成上述检查后，才从与目标匹配的最小命令开始：
-
-```text
-rm -- 待删除文件
-rmdir -- 待删除空目录
-rm -r -- 待递归删除目录
-```
-
-`rm -f` 的主要作用是忽略不存在的文件并取消部分交互提示，不代表“更彻底”，也不会让危险操作更安全。删除后同时使用 `test ! -e 目标路径` 和 `test ! -L 目标路径` 验证目录项确实消失；如果删除失败，不要未经核对就升级为 `sudo rm -rf`，而应先检查对象类型、目录内容、权限和挂载边界。
+`rm -f` 会忽略不存在的路径并取消交互提示，不代表“更彻底”，也不会让递归删除更安全。删除后应按第 4.5 节的后置条件确认目录项确实消失；如果删除失败，先检查对象类型、目录内容和权限，不要未经核对就追加 `-f` 或升级为 `sudo rm -rf`。
 
 ## 6. 分阶段安全练习
 
@@ -580,10 +576,14 @@ fi
 - [GNU Coreutils Manual](https://www.gnu.org/software/coreutils/manual/coreutils.html)（2026-08-20）
 - [GNU Coreutils Manual：cp](https://www.gnu.org/software/coreutils/manual/html_node/cp-invocation.html)（2026-08-20）
 - [GNU Coreutils Manual：mv](https://www.gnu.org/software/coreutils/manual/html_node/mv-invocation.html)（2026-08-20）
+- [GNU Coreutils Manual：rm](https://www.gnu.org/software/coreutils/manual/html_node/rm-invocation.html)（2026-08-20）
+- [GNU Coreutils Manual：rmdir](https://www.gnu.org/software/coreutils/manual/html_node/rmdir-invocation.html)（2026-08-20）
 - [GNU Coreutils Manual：Target directory](https://www.gnu.org/software/coreutils/manual/html_node/Target-directory.html)（2026-08-20）
 - [GNU Coreutils Manual：du](https://www.gnu.org/software/coreutils/manual/html_node/du-invocation.html)（2026-08-20）
 - [GNU Coreutils Manual：df](https://www.gnu.org/software/coreutils/manual/html_node/df-invocation.html)（2026-08-20）
 - [Ubuntu Manpage：mv](https://manpages.ubuntu.com/manpages/noble/man1/mv.1.html)（2026-08-20）
+- [Ubuntu Manpage：rm](https://manpages.ubuntu.com/manpages/noble/man1/rm.1.html)（2026-08-20）
+- [Ubuntu Manpage：rmdir](https://manpages.ubuntu.com/manpages/noble/man1/rmdir.1.html)（2026-08-20）
 - [Ubuntu Manpage：du](https://manpages.ubuntu.com/manpages/noble/man1/du.1.html)（2026-08-20）
 - [Ubuntu Manpage：df](https://manpages.ubuntu.com/manpages/noble/man1/df.1.html)（2026-08-20）
 - [GNU Findutils Manual](https://www.gnu.org/software/findutils/manual/)（2026-08-20）
