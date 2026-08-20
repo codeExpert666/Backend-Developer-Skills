@@ -10,7 +10,7 @@ tags:
   - LVM
   - 文件系统
 created: 2026-07-18T22:51:07
-updated: 2026-08-19T16:18:58
+updated: 2026-08-20T15:19:14
 ---
 
 本文建立 Linux 本地存储的基础模型，解释块设备、分区、LVM（Logical Volume Manager，逻辑卷管理器）、文件系统和挂载点之间的关系。主线是先识别存储层次，再通过只读命令观察布局和定位容量，最后把这些概念映射到 Ubuntu Server 安装器。
@@ -25,7 +25,7 @@ updated: 2026-08-19T16:18:58
 > 命令结构和参数查询见 [[Linux 命令行学习路线与命令地图]] 与 [[Shell 命令结构、类型与帮助系统]]；路径、目录和挂载点相关的通用操作见 [[Linux 文件与目录常用命令]]。
 
 > [!info] 资料核对日期
-> 本文涉及 Linux 块设备和 `lsblk` 的信息于 **2026-08-19** 根据 Linux 内核文档与 util-linux 上游手册核对；Ubuntu Server 安装器和默认 LVM 容量策略的信息于 **2026-08-18** 根据 Canonical 官方文档与官方仓库核对。安装器版本和默认策略会变化，实际安装时应以当前界面生成的存储摘要为准。
+> 本文涉及 GNU `df` 的路径参数、容量字段和选项于 **2026-08-20** 根据 GNU Coreutils 与 Ubuntu 24.04 手册核对；Linux 块设备和 `lsblk` 的信息于 **2026-08-19** 根据 Linux 内核文档与 util-linux 上游手册核对；Ubuntu Server 安装器和默认 LVM 容量策略的信息于 **2026-08-18** 根据 Canonical 官方文档与官方仓库核对。安装器版本和默认策略会变化，实际安装时应以当前界面生成的存储摘要为准。
 
 ## 1. 先建立最简单的存储链
 
@@ -227,6 +227,8 @@ Filesystem                         Type  Size  Used Avail Use% Mounted on
 到这一步可以确认：根路径 `/` 位于一个 ext4 文件系统中，该文件系统使用 `/dev/mapper/ubuntu--vg-ubuntu--lv` 作为来源。这个路径没有直接显示为普通分区；它与分区、LVM 和整块磁盘的关系，还需要在 4.2、4.3 节使用 `lsblk` 和 `lvs` 继续确认。
 
 `df` 回答的是文件系统内部还有多少可用空间。这里的 87 GiB 是根文件系统的容量，不代表整块磁盘或整个 VG 的容量；`df` 也不显示磁盘中未分配的区域，以及 VG 中尚未分配给 LV 的容量。
+
+文件系统除了提供保存内容的空间，还要为每个新文件或目录保存一条对象记录；许多 Linux 文件系统把这种记录称为 inode（index node，索引节点）。因此，`df -hT /` 显示 `Avail` 仍有空间时，也不能单独证明一定可以创建新对象；还可以使用 `df -i /` 检查 inode 使用情况，并继续检查写入权限和文件系统是否只允许读取。怎样用 `du` 定位目录占用以及比较两条命令的统计边界，见 [[Linux 文件与目录常用命令#4.4 检查目录占用与文件系统容量|du 与 df 的组合诊断]]。
 
 ### 4.2 再用 `lsblk` 连回分区和磁盘
 
@@ -479,8 +481,14 @@ LUKS 用于块设备加密，LVM 用于容量组织。在 Ubuntu Server 引导�
 - [[UTM 虚拟机资源规划]]
 - [[UTM 虚拟机快照、备份与恢复]]
 - [[Linux 开发工作区与本地文件系统规划]]
+- [[Linux 文件与目录常用命令]]
 
 ## 官方参考资料
+
+以下 GNU `df` 资料于 **2026-08-20** 核对：
+
+- [GNU Coreutils Manual：df](https://www.gnu.org/software/coreutils/manual/html_node/df-invocation.html)
+- [Ubuntu Manpage：df](https://manpages.ubuntu.com/manpages/noble/man1/df.1.html)
 
 以下块设备与设备关系资料于 **2026-08-19** 核对：
 
