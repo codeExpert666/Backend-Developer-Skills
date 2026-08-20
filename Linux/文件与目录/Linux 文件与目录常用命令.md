@@ -11,7 +11,7 @@ tags:
   - Bash
   - 文件系统
 created: 2026-07-19T23:47:26
-updated: 2026-08-20T21:05:21
+updated: 2026-08-20T21:37:50
 ---
 
 本文建立一套处理文件与目录的最小工作流：先定位当前上下文并只读核对目标，再执行最小范围的创建、复制、移动或删除，随后验证结果；若中途失败，则保留现场并判断恢复方式。目标不是背完所有参数，而是能够安全完成日常操作，并在忘记选项时知道怎样查证。
@@ -374,13 +374,17 @@ touch 文件路径
 
 ### 5.3 移动或重命名
 
-`mv` 可以重命名，也可以把对象移动到另一个目录。与 `cp` 一样，已有目录会改变目标解释，已有文件还可能面临覆盖风险，因此必须先分别核对源和目标。
+`mv` 可以重命名，也可以把对象移动到另一个目录；操作成功后，源对象不再保留在原路径。移动目录不需要递归选项，普通写法移动符号链接时，移动的是链接本身。
 
-同一文件系统内的普通重命名通常只改变目录项；源和目标位于不同文件系统时，`mv` 可能变成“复制到目标后再删除源对象”，不再是同一文件系统中的原子重命名。无法确认边界或迁移重要目录时，优先采用“复制 → 验证目标 → 单独处理源目录”的可恢复流程。
+| 目的 | 示例 | 结果 |
+| --- | --- | --- |
+| 重命名对象 | `mv -- draft.txt report.txt` | 原名称消失，对象改用 `report.txt` |
+| 移入已有目录 | `mv -- report.txt archive/` | 真正目标是 `archive/report.txt` |
+| 把多个对象移入同一目录 | `mv -- a.txt b.txt archive/` | `archive/` 必须是已有目录 |
 
-```text
-mv 源路径 目标路径
-```
+目标是已有目录时，`mv` 会在其中追加源路径的最后一个名称；否则会把目标当作新路径，目标的父目录不存在时操作会失败。真正目标已经存在时可能被替换，担心覆盖可以使用 `mv -i` 要求交互确认，但仍应先核对真正目标。
+
+同一文件系统内的移动通常只是重命名；跨文件系统时则可能先复制再删除源对象，不再是原子操作。迁移重要目录时，优先采用“复制 → 验证目标 → 单独处理源目录”的可恢复流程。
 
 操作后应同时验证两项：新路径符合预期，旧路径也处于预期状态。只检查其中一端，无法证明移动或重命名完整完成。
 
@@ -575,9 +579,11 @@ fi
 
 - [GNU Coreutils Manual](https://www.gnu.org/software/coreutils/manual/coreutils.html)（2026-08-20）
 - [GNU Coreutils Manual：cp](https://www.gnu.org/software/coreutils/manual/html_node/cp-invocation.html)（2026-08-20）
+- [GNU Coreutils Manual：mv](https://www.gnu.org/software/coreutils/manual/html_node/mv-invocation.html)（2026-08-20）
 - [GNU Coreutils Manual：Target directory](https://www.gnu.org/software/coreutils/manual/html_node/Target-directory.html)（2026-08-20）
 - [GNU Coreutils Manual：du](https://www.gnu.org/software/coreutils/manual/html_node/du-invocation.html)（2026-08-20）
 - [GNU Coreutils Manual：df](https://www.gnu.org/software/coreutils/manual/html_node/df-invocation.html)（2026-08-20）
+- [Ubuntu Manpage：mv](https://manpages.ubuntu.com/manpages/noble/man1/mv.1.html)（2026-08-20）
 - [Ubuntu Manpage：du](https://manpages.ubuntu.com/manpages/noble/man1/du.1.html)（2026-08-20）
 - [Ubuntu Manpage：df](https://manpages.ubuntu.com/manpages/noble/man1/df.1.html)（2026-08-20）
 - [GNU Findutils Manual](https://www.gnu.org/software/findutils/manual/)（2026-08-20）
