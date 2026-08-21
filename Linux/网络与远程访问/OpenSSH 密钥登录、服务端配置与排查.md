@@ -17,7 +17,7 @@ tags:
   - SSH
   - OpenSSH
 created: 2026-07-16T00:28:30
-updated: 2026-07-30T00:03:20
+updated: 2026-08-21T14:54:41
 ---
 
 SSH 是一套加密远程访问协议，OpenSSH 是其常用实现，通常由客户端 `ssh` 与服务端 `sshd` 配合工作。本篇以传统公钥登录为主线，完成服务端准备、网络入口核对、主机指纹验证、用户密钥登记、客户端配置、认证收紧和故障排查。
@@ -311,7 +311,7 @@ stat -c 'mode=%A owner=%U group=%G path=%n' \
 ssh-keygen -lf "$HOME/.ssh/authorized_keys"
 ```
 
-`id -un` 输出当前进程的有效用户名，参数含义见 [[Linux 用户、用户组、sudo 与文件权限#2.1 名称是给人看的，UID/GID 才参与判断|id 命令基础用法]]；结果应与刚才的 `SSH_USER` 一致，否则当前 `$HOME` 属于错误用户。有效配置应显示 `pubkeyauthentication yes`、`authorizedkeysfile` 包含 `.ssh/authorized_keys`、`strictmodes yes`；有 `Match` 时需按实际连接上下文核对。
+`id -un` 输出当前进程的有效用户名，参数含义见 [[Linux 用户、用户组、sudo 与文件权限#2.3 用 id 与 getent 分别观察两层状态|id -un 参数含义]]；结果应与刚才的 `SSH_USER` 一致，否则当前 `$HOME` 属于错误用户。有效配置应显示 `pubkeyauthentication yes`、`authorizedkeysfile` 包含 `.ssh/authorized_keys`、`strictmodes yes`；有 `Match` 时需按实际连接上下文核对。
 
 `$HOME/.ssh` 和 `authorized_keys` 应分别为 `700` 和 `600`，并归目标用户所有；用户家目录不应允许组或其他用户写入。`ssh-keygen` 可能输出多行指纹，其中必须有一行的密钥类型和 `SHA256:...` 指纹与客户端一致。注释不参与认证。如果找不到匹配指纹，不要继续收紧认证。详见 [[OpenSSH 常用命令基础#3.2 读取公钥指纹]] 与 [[Linux 用户、用户组、sudo 与文件权限]]。
 
