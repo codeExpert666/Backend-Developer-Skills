@@ -10,7 +10,7 @@ tags:
   - sudo
   - umask
 created: 2026-07-17T00:48:00
-updated: 2026-08-21T20:21:57
+updated: 2026-08-22T19:52:15
 ---
 
 Linux 文件权限解决的是：**一个进程以什么身份，对某个文件系统对象执行某项操作时，系统是否允许**。进程是程序一次运行形成的执行实例；进程、程序和服务的区别见 [[Linux 进程与系统资源常用命令]]。
@@ -572,7 +572,7 @@ namei -l "$HOME/src"
 
 几种容易误解的目录组合：
 
-- 目录只有 `r`、没有 `x`：可能看到部分名称，却不能正常访问名称对应的元数据或内容。
+- 目录只有 `r`、没有 `x`：通常可以读取目录项名称，却不能正常访问名称对应的元数据或内容。
 - 目录只有 `x`、没有 `r`：知道准确名称时可能访问该对象，但不能正常列出目录内容。
 - 目录有 `w`、没有 `x`：通常仍不能完成创建、删除或重命名。
 - 删除文件主要修改父目录中的目录项，因此通常取决于父目录的 `w+x`，不要求文件本身可写。
@@ -611,7 +611,7 @@ namei -l "$HOME/src"
 ```text
 chmod u+x script.sh
 chmod g-w shared.txt
-chmod o= config.ini
+chmod o= config.ini    # 无 rwx 表示设置为空权限
 chmod 0640 config.ini
 ```
 
@@ -622,45 +622,174 @@ chmod 0640 config.ini
 
 通常只有文件 owner 或具有相应特权的进程可以修改 mode。数字模式虽然简短，但执行前必须先把每一位翻译回 `rwx`。
 
-### 6.2 chown 与 chgrp 不会自动修复权限位
+#### `-R` 会把修改范围扩展到整棵目录树
 
-结构示例：
+对目录执行不带 `-R` 的 `chmod`，只修改这个目录对象自身的 mode，不会自动修改其中的后代。GNU Coreutils 的 `-R` 是 `--recursive`（递归）的短选项：它不是另一条命令，而是让 `chmod` 从指定目录开始，继续进入各级子目录，对这个目录及其内容应用同一条 mode 变更规则。
+
+以下只是需要替换占位符的语法骨架，不能原样执行：
 
 ```text
-chown USER_NAME FILE
-chown USER_NAME:GROUP_NAME FILE
-chgrp GROUP_NAME FILE
+chmod -R --preserve-root MODE DIRECTORY
 ```
 
-`chown` 修改文件 owner，也可以同时修改 group；`chgrp` 只修改 group。它们不会自动把 `0600` 改成 `0640`，也不会因为 owner 改变而重新计算 `rwx`。
+- `MODE` 可以是数字模式或符号模式；数字模式会把每个处理对象的普通 `rwx` 位设置为同一个目标组合，符号模式则根据每个对象原来的 mode 应用同一条增、减或精确设置规则。
+- `DIRECTORY` 必须替换为已经核对的明确目录。命令行只写出一个目录，不代表只修改一个对象；实际对象数量取决于整棵目录树。
 
-普通用户通常不能把文件所有者转给任意用户，因此修改 owner 往往需要管理员权限。文件 owner 在系统规则允许时，可以把文件 group 改为自己所属的组；实际限制还可能受文件系统和挂载方式影响。
+递归处理时，普通文件和目录对 `x` 的需求不同，不能假设同一个数字 mode 总是适合二者：
+
+- `chmod -R 0644 DIRECTORY` 会移除目录的 `x`，使目录无法被正常穿过。
+- `chmod -R 0755 DIRECTORY` 会给普通文件也设置执行权限，即使它们并不是程序或脚本。
+
+符号模式中的大写 `X` 表示“有条件地设置执行或搜索权限”：对象是目录，或者普通文件原本已有任一执行位时，`X` 才会影响它。例如，`u+rwX` 会给 owner 增加读写权限，并只给目录或原本可执行的文件增加 owner 的 `x`。这只是避免把所有普通文件一律变成可执行文件的一种表达能力，不代表任何目录树都应该使用这组权限。
+
+> [!warning] 递归修改没有通用安全值
+> - 执行前应先按 [[Linux 文件与目录常用命令#3.1 执行前核对|递归操作前的范围核对]] 确认目标目录及其后代，并额外识别符号链接和挂载点。
+> - `--preserve-root` 只拒绝把 `/` 当作递归目标，不能防止选错其他目录，也不能阻止命令进入目标目录树内的挂载点。
+> - 一棵目录树原本可能包含多种 mode；执行后再使用一次 `chmod -R OLD_MODE DIRECTORY`，通常无法恢复每个对象各自原来的权限。因此，修改重要目录树前必须准备能够保留原始元数据的备份、快照或清单。
+> - 修改后既要复查实际对象的 mode，也要以真正需要访问它们的用户、服务或容器验证目标操作。符号链接本身、指向对象和递归遍历策略的区别在第 6.3 节继续说明。
+
+### 6.2 用 chown 与 chgrp 修改 owner 和 group
+
+`chown` 修改对象的 owner，也可以同时修改 group；`chgrp` 只修改 group。命令行可以使用用户和组的名称，但文件系统对象实际保存的是数字 UID 与 GID，名称只是系统查询后显示的映射。
+
+日常需要识别以下写法；其中 `FILE...` 表示一个或多个已经核对的明确路径：
+
+| 目的 | 语法骨架 | 实际变化 |
+| --- | --- | --- |
+| 只修改 owner | `chown USER_NAME FILE...` | owner 改变，group 保持不变 |
+| 同时修改 owner 和 group | `chown USER_NAME:GROUP_NAME FILE...` | owner 与 group 同时改变 |
+| 只修改 group | `chgrp GROUP_NAME FILE...` | group 改变，owner 保持不变 |
+| 使用 `chown` 只修改 group | `chown :GROUP_NAME FILE...` | 在 GNU/Linux 上与相应的 `chgrp` 用法作用相同 |
+
+这些命令不会重新计算普通 `rwx` 位，也不会自动把 `0600` 改成 `0640`。但是，归属变化可能改变后续访问结果，因为进程会根据新的 owner 和 group 重新选择实际生效的 owner、group 或 others 权限。
+
+例如，一个对象的 mode 始终为 `0640`，也就是 owner 为 `rw-`、group 为 `r--`、others 没有权限。把对象的 group 从 `ops` 改为 `developers` 后，`r--` 本身没有变化，但它开始可能对 `developers` 组成员生效；只属于 `ops`、又不匹配 owner 的进程则不再因为原 group 获得读取权限。
+
+普通用户通常不能把文件所有者转给任意用户，因此修改 owner 往往需要管理员权限。以文件 owner 身份运行的进程在系统规则允许时，可以把 group 改为自己所属的组；实际限制还可能受文件系统和挂载方式影响。是否使用 `sudo` 应由目标归属和所需权限决定，不能因为 `chown` 执行失败就直接把它当作固定前缀。
+
+对单个对象，日常操作应形成“确认身份与对象 → 修改 → 复查 → 实际验证”的闭环。以下是需要替换占位符的语法骨架，不能原样执行：
+
+```text
+id
+getent passwd USER_NAME
+getent group GROUP_NAME
+stat -c 'owner=%U(%u) group=%G(%g) symbolic=%A numeric=%a path=%n' -- TARGET_PATH
+
+chown -- USER_NAME:GROUP_NAME TARGET_PATH
+stat -c 'owner=%U(%u) group=%G(%g) symbolic=%A numeric=%a path=%n' -- TARGET_PATH
+```
+
+- `id` 确认当前进程身份；`getent` 确认目标名称能够解析到预期的账号记录。
+- 如果 `TARGET_PATH` 可能是符号链接，应先按下一节确定要修改链接本身还是指向对象，并让修改前记录、变更命令和修改后验证始终针对同一个对象。
+- 第一次 `stat` 保存修改前的名称、数字 UID/GID 和 mode；需要只改 group 时，把变更命令换成 `chgrp -- GROUP_NAME TARGET_PATH`。
+- `--` 表示选项到此结束，使后面的 owner、group 和路径按操作数处理。
+- 第二次 `stat` 只能证明元数据已经变化；仍应以真正需要访问该对象的用户、服务或容器重新验证目标操作。
+- 如果结果不符合预期，应根据修改前记录恢复 owner 和 group，不凭印象猜测名称或数字 ID。
+
+对目录执行普通 `chown` 或 `chgrp` 只修改目录对象本身，不会自动修改其中的后代。确实需要处理整棵目录树时，GNU Coreutils 使用 `-R` 表示递归：
+
+```text
+chown -R --preserve-root -- USER_NAME:GROUP_NAME DIRECTORY
+chgrp -R --preserve-root -- GROUP_NAME DIRECTORY
+```
+
+递归前必须先确认目录树、符号链接和挂载点，并把目标限制为已审查的明确目录。`--preserve-root` 只拒绝把 `/` 当作递归目标，不能防止选错其他目录；符号链接本身与指向对象的选择、递归遍历风险和恢复顺序在下一节集中说明。
 
 ### 6.3 先决定操作符号链接还是其指向对象
 
 符号链接（symbolic link）是一类保存另一段路径引用的文件系统对象。命令可以操作链接这条目录项，也可能沿着引用操作最终对象；链接目标不存在时，链接本身仍可能存在。对象模型和失效符号链接见 [[Linux 文件与目录常用命令#1. 先理解路径与文件对象]]。
 
-在 GNU/Linux 上，以下命令的默认观察或操作对象并不完全相同：
+#### 链接自身和指向对象拥有各自的元数据
+
+链接自身与指向对象各自拥有 owner、group 和 mode，但这些属性在 Linux 上并不具有完全相同的作用：
+
+- 普通符号链接自身的 owner 和 group 可以修改。在带有 sticky bit 的共享目录中判断谁能删除或重命名链接，以及启用了受保护符号链接规则时，链接 owner 都可能参与系统判断。
+- Linux 普通符号链接自身的权限固定显示为 `0777`，不参与普通访问检查，也不能修改。链接指向对象的 mode 则会按普通文件或目录规则生效。
+
+因此，“修改链接自身”对 `chmod` 与 `chown`、`chgrp` 不是同一件事：Linux 可以修改链接自身的 owner/group，却没有一组可供 `chmod` 修改并生效的普通符号链接权限位。
+
+先使用与目标对象一致的观察方式：
 
 - `stat PATH` 默认观察命令行参数所指的符号链接本身。
 - `stat -L PATH` 观察符号链接指向的对象。
 - `realpath -e PATH` 返回所有组件都存在时的规范化路径。
-- `chmod PATH` 面对命令行参数中的符号链接时，通常修改链接指向对象的 mode。
-- 非递归 `chown PATH` 和 `chgrp PATH` 通常也操作链接指向对象；`-h` 才表示修改链接本身的 owner/group。
 
-因此，不能先记录链接本身的 `stat`，再误以为该记录能够恢复随后被 `chmod` 修改的目标对象。
+#### 非递归模式只需决定操作哪个对象
+
+非递归是指没有使用 `-R`，命令只处理明确列出的路径，不继续遍历目录树。在 GNU Coreutils 中，命令行参数本身是符号链接时：
+
+| 语法骨架 | 操作对象 | Linux 上的结果 |
+| --- | --- | --- |
+| `chmod MODE LINK_PATH` | 默认解引用，操作链接指向对象 | 修改指向对象的 mode |
+| `chmod -h MODE LINK_PATH` | 请求操作链接自身 | 普通符号链接的 mode 不能修改；不得把这条语法当作 Linux 上有效的权限修改方法 |
+| `chown USER_NAME:GROUP_NAME LINK_PATH` | 默认解引用，操作链接指向对象 | 修改指向对象的 owner/group |
+| `chown -h USER_NAME:GROUP_NAME LINK_PATH` | 不解引用，操作链接自身 | 修改链接自身的 owner/group |
+| `chgrp GROUP_NAME LINK_PATH` | 默认解引用，操作链接指向对象 | 修改指向对象的 group |
+| `chgrp -h GROUP_NAME LINK_PATH` | 不解引用，操作链接自身 | 修改链接自身的 group |
+
+这里的小写 `-h` 是 `--no-dereference`（不解引用）的短选项。GNU Coreutils 从 9.5 起才为 `chmod` 增加 `-h`、`-H`、`-L`、`-P` 和 `--dereference`；较旧的 GNU Coreutils 或其他实现可能不认识这些 `chmod` 选项。即使当前 `chmod` 支持 `-h`，底层系统不能修改链接 mode 时也可能不报告错误，因此必须使用 `chmod --version`、`chmod --help`、`man chmod` 和修改后的 `stat` 结果共同判断，不能只看退出码。
+
+#### 递归模式还要决定是否沿链接进入目录树
+
+使用 `-R` 后，需要分别回答两个问题：
+
+1. **遇到一个符号链接时改谁**：`--dereference` 表示操作指向对象，小写 `-h` / `--no-dereference` 表示操作链接自身。
+2. **符号链接指向目录时是否进入其中**：大写 `-H`、`-L`、`-P` 控制目录树的遍历边界，只在递归场景中有意义。
+
+这里的“进入目录链接”是指沿着符号链接到达目标目录，再继续递归处理目标目录中的后代。
+
+先固定一个目录树：
+
+```text
+project-link -> project/
+project/
+├── src/
+└── shared-link -> /srv/shared/
+```
+
+- `project-link` 直接作为命令行中的路径参数，是递归起点，因此属于“命令行直接列出的目录链接”。
+- `shared-link` 没有直接写在命令行中；命令进入 `project/` 后才会发现它，因此属于“递归途中遇到的目录链接”。
+
+假设递归命令以 `project-link` 为起点，三个选项的区别是：
+
+| 选项 | 是否进入起点链接 `project-link` 指向的 `project/` | 是否进入途中链接 `shared-link` 指向的 `/srv/shared/` | 最简记忆 |
+| --- | --- | --- | --- |
+| `-H`（half-logical，半逻辑） | **进入** | **不进入** | 只跟随命令行直接列出的目录链接 |
+| `-L`（logical，逻辑） | **进入** | **进入** | 跟随所有遇到的目录链接，范围最大 |
+| `-P`（physical，物理） | **不进入** | **不进入** | 不沿目录链接跨入另一棵目录树 |
+
+如果命令行起点直接写真实目录 `project/`，而不是目录链接 `project-link`，那么三个选项都会正常进入 `project/`。此时 `-H` 与 `-P` 都不会进入里面的 `shared-link`，只有 `-L` 会进入；因此，就这里讨论的目录遍历而言，`-H` 只在“命令行递归起点本身是目录链接”时才与 `-P` 表现不同。
+
+表中的“进入”只描述是否继续处理目标目录的后代，“不进入”不等于已经决定如何处理链接这个对象。三者也只对**指向目录的符号链接**有递归遍历意义；指向普通文件的符号链接没有可进入的后代，只需要判断修改链接还是其指向文件。
+
+大写 `-H` 与小写 `-h` 只相差大小写，但职责完全不同：前者控制是否遍历命令行参数中的目录链接，后者控制修改链接自身还是指向对象。遍历选项与作用对象选项是两个维度，不能用其中一组选项推断另一组行为。
+
+以下默认行为以 **GNU Coreutils 9.11** 为准，并于 **2026-08-22** 核对：
+
+| 命令 | 未显式选择链接选项时的递归行为 |
+| --- | --- |
+| `chmod -R MODE PATH` | 默认遍历策略是 `-H`。命令行直接列出的链接按指向对象处理；如果它指向目录，还会进入该目录。递归途中遇到的符号链接默认不会继续遍历，也不会修改链接自身或其指向对象的 mode |
+| `chown -R USER_NAME:GROUP_NAME PATH` | 默认使用 `-P` 且不解引用：不沿符号链接进入目录树；遇到符号链接时修改链接自身的 owner/group，不修改指向对象 |
+| `chgrp -R GROUP_NAME PATH` | 默认使用 `-P` 且不解引用：不沿符号链接进入目录树；遇到符号链接时修改链接自身的 group，不修改指向对象 |
+
+> [!warning] 不要把 `-L` 或 `--dereference` 当作递归修复的固定搭配
+> `-L` 可能让命令越过原目录树，进入链接指向的其他位置；递归过程中目录内容还可能变化，解引用也会带来符号链接替换竞态。GNU Coreutils 要求递归的 `--dereference` 与 `-H` 或 `-L` 配合，而不能与 `-P` 的“不遍历链接”边界同时使用。只有在已经核对链接来源、指向位置和并发写入风险时，才应选择这些行为。
+
+#### 让记录、修改和验证始终针对同一个对象
+
+不能先记录链接自身的 `stat`，再误以为该记录能够恢复随后被 `chmod`、`chown` 或 `chgrp` 修改的指向对象；反过来也不能用指向对象的记录恢复链接自身的 owner/group。
 
 `test` 是通过退出状态表达条件真假的 Shell 命令；`test -L PATH` 在参数指定的目录项本身是符号链接时返回成功。完整条件语法见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
 
 对真实目标执行修改时，按以下顺序处理：
 
-1. 使用 `test -L`、`stat` 和 `realpath -e` 判断输入路径是否包含或本身就是符号链接。
-2. 明确本次要修改的是链接本身，还是链接指向的对象；不能把两者混为一谈。
-3. 对**实际将被修改的对象**记录数字 UID、GID、符号 mode 和数字 mode；需要观察引用对象时使用 `stat -L` 或规范化后的路径。
-4. 把操作限制到明确的单个对象或已审查清单。
-5. 执行满足需求的最小变更。
-6. 再次检查同一个对象，并以实际访问身份验证所需操作。
-7. 失败时使用修改前记录恢复，不凭印象猜测用户名或 mode。
+1. 先确认是否使用 `-R`，区分单个路径操作与目录树遍历。
+2. 使用 `namei -l -- PATH` 检查每层路径组件，使用 `test -L PATH` 判断末端目录项本身是否为符号链接，再用 `stat` 与 `realpath -e` 区分链接和最终对象。
+3. 明确本次要修改的是链接自身，还是链接指向对象；递归时再明确使用 `-H`、`-L` 还是 `-P`，不要依赖记忆猜默认值。
+4. 对**实际将被修改的对象**记录数字 UID、GID、符号 mode 和数字 mode；观察指向对象时使用 `stat -L` 或规范化后的路径，观察链接自身时使用不解引用的 `stat`。
+5. 把操作限制到明确的单个对象或已审查清单，并执行满足需求的最小变更。
+6. 使用与修改前相同的观察方式再次检查同一个对象，再以实际访问身份验证所需操作。
+7. 失败时使用修改前记录恢复；递归操作必须按每个对象原来的元数据恢复，不能用一个统一值覆盖整棵目录树。
 
 不要把 `chmod -R 777` 或无边界的 `chown -R` 当作通用修复：
 
@@ -716,10 +845,12 @@ umask 0022
 
 两者设置相同的 mask，权限效果没有区别。`0022` 是常见的四位对齐写法；最前面的 `0` 不是多出一组用户权限。
 
-这里不要机械套用 `chmod 0750` 的解释：
+`chmod` 和 `umask` 都可能写成四位八进制数，但不能把 `chmod` 第一位的含义套到 `umask` 上：
 
-- 对完整文件 mode，四位写法的第一位可以表示特殊权限位。
-- 对普通 umask，真正参与屏蔽的是 owner、group、others 对应的后三位；开头的 `0` 是显示和书写上的补齐。
+- `chmod 0750` 应读作 `0 | 7 | 5 | 0`：第一位 `0` 对应特殊权限位，表示没有设置 setuid、setgid 或 sticky bit；后三位分别是 owner、group、others 的权限。
+- `umask 0022` 应读作 `补齐用的 0 | owner 0 | group 2 | others 2`：真正参与屏蔽的是后三位 `022`；最前面的 `0` 只用于四位对齐，不表示特殊权限位，也不参与屏蔽。
+
+所以，这里不能套用的只是**第一位的含义**；后三位依然都按 owner、group、others 解读。
 
 #### 查看当前 umask
 
@@ -769,11 +900,27 @@ umask -S
 install -d -m 0750 "$HOME/src"
 ```
 
-- `-d` 表示创建缺少的目录层级并处理目标目录。
-- `-m 0750` 表示为这次命令处理的目标显式设置 mode。
-- `0750` 不是 umask，而是目标目录权限 `rwxr-x---`。
+- `-d` 把命令行中显式给出的每个路径作为目标目录；目标尚不存在时创建它，并自动补齐缺少的父目录。
+- `-m 0750` 只作用于命令行中显式给出的目标目录，不作用于为补齐路径而自动创建的父目录。即使目标目录已经存在，这条命令也会把它现有的普通 `rwx` 位改为 `0750`，而不是只在新建目录时设置一次。因此，需要保留已有目标目录的权限时，应在执行前先检查它是否存在。
+- GNU Coreutils 9.11 会把自动补齐的父目录创建为 `0755`，即 `rwxr-xr-x`，不受这次 `-m 0750` 或当前 `umask` 影响；已经存在的父目录不会被这条命令改成 `0755`。
+- `0750` 不是 umask，而是显式目标目录的 mode，对应 `rwxr-x---`。
 
-它与普通“程序请求 mode，再由 umask 屏蔽”的创建主线不同：`install` 会按显式目标 mode 处理此次对象。实际建立 `$HOME/src` 的流程见 [[Linux 开发工作区与本地文件系统规划]]。
+**必须注意：GNU `install` 通过 `-m` 为显式目标目录设置的 mode 不受当前进程 `umask` 影响。**
+
+在上面的命令中，`$HOME` 通常已经存在，`$HOME/src` 是唯一显式给出的目标，因此新建的 `src` 会得到 `0750`，没有需要自动补齐的中间目录。再看一个嵌套路径；假设 `$HOME` 已存在，而 `work`、`backend` 和 `src` 都不存在：
+
+```text
+install -d -m 0750 "$HOME/work/backend/src"
+```
+
+| 路径 | 在这次命令中的角色 | 普通 `rwx` mode |
+| --- | --- | --- |
+| `$HOME` | 已存在的父目录 | 保持原值 |
+| `$HOME/work` | 自动补齐的父目录 | `0755` |
+| `$HOME/work/backend` | 自动补齐的父目录 | `0755` |
+| `$HOME/work/backend/src` | 命令行显式给出的目标目录 | `0750` |
+
+它与普通“程序请求 mode，再由 umask 屏蔽”的创建主线不同：GNU `install` 会按上述规则处理显式目标和缺失父目录。这里的数字只说明普通 `rwx` 位；父目录的 setgid 继承、默认 ACL 或其他机制仍可能影响完整元数据，需要按第 8 节继续检查。实际建立 `$HOME/src` 的流程见 [[Linux 开发工作区与本地文件系统规划]]。
 
 ## 7. 在临时目录完成一次基础权限闭环
 
@@ -1074,7 +1221,7 @@ sudo -v
 - [ ] 能区分账号数据中的组成员关系与当前进程实际携带的组。
 - [ ] 能解释为什么加入新组后通常需要新登录会话。
 - [ ] 能区分 `chmod`、`chown`、`chgrp`、`sudo`、`umask` 和 `install -m` 修改的状态。
-- [ ] 面对符号链接时，能区分链接本身与其指向对象，并记录实际被修改对象的状态。
+- [ ] 面对符号链接时，能区分“修改链接还是指向对象”与“递归时是否沿链接进入目录树”两个问题，知道小写 `-h` 与大写 `-H`、`-L`、`-P` 的职责不同，并记录实际被修改对象的状态。
 - [ ] 能说明 `umask` 没有固定倒计时，并解释当前 Shell、子 Shell、子进程和新登录会话的生效边界。
 - [ ] 能解释 `022` 与 `0022` 为什么等价，并推导 `0027` 下常见文件和目录结果。
 - [ ] 能读懂 `sudo -l` 中的匹配 Defaults 与 `(ALL : ALL) ALL`，并说明它们分别描述执行设置和命令授权。
@@ -1087,7 +1234,7 @@ sudo -v
 
 ## 官方参考资料
 
-以下通用资料于 **2026-07-25** 核对；`sudo -i` 的登录 Shell 语义、Ubuntu 25.10 起的 sudo 默认提供者与 sudoers 授权规则于 **2026-08-21** 重新核对：
+以下通用资料于 **2026-07-25** 核对；`sudo -i` 的登录 Shell 语义、Ubuntu 25.10 起的 sudo 默认提供者与 sudoers 授权规则于 **2026-08-21** 重新核对；Linux 普通符号链接的元数据边界、GNU Coreutils 9.5 的 `chmod` 链接选项、9.11 的递归默认行为以及 `install -d` 的父目录 mode 于 **2026-08-22** 核对：
 
 - [Ubuntu Server：用户管理](https://ubuntu.com/server/docs/how-to/security/user-management/)
 - [Ubuntu 25.10 发布说明：sudo-rs and sudo](https://documentation.ubuntu.com/release-notes/25.10/)
@@ -1095,13 +1242,18 @@ sudo -v
 - [Linux man-pages：credentials(7)](https://man7.org/linux/man-pages/man7/credentials.7.html)
 - [Linux man-pages：inode(7)](https://man7.org/linux/man-pages/man7/inode.7.html)
 - [Linux man-pages：path_resolution(7)](https://man7.org/linux/man-pages/man7/path_resolution.7.html)
+- [Linux man-pages：symlink(7)](https://man7.org/linux/man-pages/man7/symlink.7.html)
 - [Linux man-pages：umask(2)](https://man7.org/linux/man-pages/man2/umask.2.html)
 - [Linux man-pages：acl(5)](https://man7.org/linux/man-pages/man5/acl.5.html)
 - [Linux man-pages：capabilities(7)](https://man7.org/linux/man-pages/man7/capabilities.7.html)
 - [GNU Coreutils：File permissions](https://www.gnu.org/software/coreutils/manual/html_node/File-permissions.html)
+- [GNU Coreutils：install invocation](https://www.gnu.org/software/coreutils/manual/html_node/install-invocation.html)
 - [GNU Coreutils：stat invocation](https://www.gnu.org/software/coreutils/manual/html_node/stat-invocation.html)
 - [GNU Coreutils：chmod invocation](https://www.gnu.org/software/coreutils/manual/html_node/chmod-invocation.html)
 - [GNU Coreutils：chown invocation](https://www.gnu.org/software/coreutils/manual/html_node/chown-invocation.html)
+- [GNU Coreutils：chgrp invocation](https://www.gnu.org/software/coreutils/manual/html_node/chgrp-invocation.html)
+- [GNU Coreutils：Traversing symlinks](https://www.gnu.org/software/coreutils/manual/html_node/Traversing-symlinks.html)
+- [GNU Coreutils 9.5 发布说明](https://lists.gnu.org/archive/html/coreutils-announce/2024-03/msg00000.html)
 - [GNU Bash：Bourne Shell Builtins（umask）](https://www.gnu.org/software/bash/manual/bash.html#index-umask)
 - [Sudo 官方手册](https://www.sudo.ws/docs/man/sudo.man/)
 - [Sudo 官方 sudoers 规则手册](https://www.sudo.ws/docs/man/sudoers.man/)
@@ -1112,6 +1264,7 @@ sudo -v
 ```bash
 man 1 chmod
 man 1 chown
+man 1 chgrp
 man 1 stat
 man 1 namei
 man 2 umask
@@ -1120,6 +1273,7 @@ man 7 capabilities
 man 7 credentials
 man 7 inode
 man 7 path_resolution
+man 7 symlink
 man 5 sudoers
 man 8 sudo
 ```

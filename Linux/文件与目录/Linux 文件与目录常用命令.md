@@ -11,7 +11,7 @@ tags:
   - Bash
   - 文件系统
 created: 2026-07-19T23:47:26
-updated: 2026-08-20T22:01:44
+updated: 2026-08-22T15:11:59
 ---
 
 本文建立一套处理文件与目录的最小工作流：先定位当前上下文并只读核对目标，再执行最小范围的创建、复制、移动或删除，随后验证结果；若中途失败，则保留现场并判断恢复方式。目标不是背完所有参数，而是能够安全完成日常操作，并在忘记选项时知道怎样查证。
@@ -149,18 +149,18 @@ pwd
 file /etc/os-release
 stat /etc/os-release
 stat -c 'type=%F owner=%U:%G mode=%a size=%s path=%n' /etc/os-release
-realpath /etc/os-release
+realpath -e -- /etc/os-release
 basename /var/log/syslog
 dirname /var/log/syslog
 ```
 
 - `file` 读取内容特征，判断文本、可执行文件、压缩包等类型；它不只依赖扩展名。
 - `stat` 显示类型、大小、权限、所有者和时间戳等元数据。
-- `realpath` 规范化路径，并在允许的情况下解析其中的符号链接；缺失或不可访问的路径组件可能使它失败，应同时检查退出状态。
+- `realpath` 输出规范化的绝对路径，消除多余的 `/`、`.` 和 `..`，并默认解析符号链接。GNU `realpath` 不带 `-e` 时，只要求最后一段之前的路径组件存在，因此最终对象不存在也可能成功；`-e`（`--canonicalize-existing`）要求所有路径组件都能解析到现有对象，适合确认“一个应当已经存在的对象最终指向哪里”。命令失败时应同时检查标准错误和退出状态。
 - `basename` 只取路径最后一段。
 - `dirname` 只取最后一段之前的部分。
 
-`basename` 和 `dirname` 处理的是路径字符串，不负责验证对象是否存在；`file`、`stat` 和 `realpath` 则会访问文件系统。需要核对符号链接时，不要只看 `realpath` 的最终结果，还要用 `ls -ld` 或 `stat` 区分链接本身和目标对象。
+`basename` 和 `dirname` 处理的是路径字符串，不负责验证对象是否存在；`file`、`stat` 和 `realpath` 则会访问文件系统。对预期尚不存在的新目标，`realpath -e` 会按设计失败；应先对已经存在的父目录使用 `realpath -e`，再单独核对目标名称及创建条件。需要核对符号链接时，不要只看 `realpath` 的最终结果，还要用 `ls -ld` 或 `stat` 区分链接本身和目标对象。
 
 ### 4.3 按条件定位对象
 
@@ -304,16 +304,18 @@ ls -ld -- "$SOURCE_PATH"
 ls -ld -- "$DESTINATION_PATH"
 file -- "$SOURCE_PATH"
 stat -- "$SOURCE_PATH"
-realpath -- "$SOURCE_PATH"
+realpath -e -- "$SOURCE_PATH"
 ```
 
-变量名是说明性占位符，必须先赋为已经核对的真实路径，不能把整段原样执行。目标预期尚不存在时，针对目标的 `ls` 返回非零状态可能正是预期结果；`file`、`stat` 或 `realpath` 遇到缺失、失效链接或不可访问的路径也可能失败。这些状态应进入判断，不能为了得到整齐输出而隐藏。
+变量名是说明性占位符，必须先赋为已经核对的真实路径，不能把整段原样执行。这里的 `$SOURCE_PATH` 预期指向已有源对象，因此 `realpath -e` 用于把“所有路径组件都存在”作为预检条件。`$DESTINATION_PATH` 可能尚不存在，针对它的 `ls` 返回非零状态可能正是预期结果；此时应检查其已经存在的父目录，不能机械地对新目标使用 `realpath -e`。`file`、`stat` 或 `realpath -e` 遇到缺失、失效链接或不可访问的路径也可能失败，这些状态应进入判断，不能为了得到整齐输出而隐藏。
 
-实际任务应根据问题选择命令：核对目录项本身优先使用 `ls -ld` 或 `stat`；判断内容类型使用 `file`；需要规范化并跟随符号链接时再使用 `realpath`。只看 `realpath` 的最终目标，不能代替对符号链接本身的检查。
+实际任务应根据问题选择命令：核对目录项本身优先使用 `ls -ld` 或 `stat`；判断内容类型使用 `file`；需要确认已有对象规范化并跟随符号链接后的路径时使用 `realpath -e`。只看 `realpath` 的最终目标，不能代替对符号链接本身的检查。
 
 #### 操作后验证
 
 `test` 通过退出状态表达条件真假。`-e`、`-f` 和 `-d` 都会跟随符号链接，分别判断路径最终指向的对象是否存在、是否为普通文件、是否为目录。`-L` 则不跟随符号链接，而是判断参数指定的路径本身是否为符号链接。因此，如果链接目标不存在，即使链接本身仍在，`test -e`、`test -f` 和 `test -d` 也会返回假，而 `test -L` 仍会返回真。在路径可以正常检查的前提下，要确认该路径既没有指向现有对象，也没有遗留符号链接，必须同时确认 `test -e` 和 `test -L` 都返回假。
+
+虽然写法相似，`realpath -e` 和 `test -e` 中的 `-e` 分别由各自命令解释：前者选择规范化路径时的存在性要求，后者只产生条件判断的退出状态。
 
 ```text
 test -e "$EXPECTED_PATH" || test -L "$EXPECTED_PATH"
@@ -527,7 +529,7 @@ fi
 5. 什么时候应优先使用 `rmdir`，什么时候才需要 `rm -r`？
 6. `find "$HOME/src" -type f -name '*.log' -print` 中的起始路径、测试条件和动作分别是什么？两个测试怎样组合，为什么名称模式要加引号？
 7. `find` 没有输出时，为什么还要检查标准错误和退出状态？它与 `grep` 分别在找什么？
-8. `basename`、`dirname` 与 `realpath` 是否都会检查对象存在？
+8. `basename`、`dirname` 会验证对象存在吗？GNU `realpath` 默认模式与 `realpath -e` 对最后一段不存在时有什么不同？为什么预期新建的目标应先检查父目录？
 9. `du -sh /var/log` 与 `du -h -x --max-depth=1 /var/log` 的输出范围有什么不同？`-x` 限制的又是什么？
 10. 为什么 `df -hT /var/log` 不表示 `/var/log` 目录自身的大小？`df -i /var/log` 改为检查什么？
 11. 为什么 `du` 的目录占用与 `df` 的文件系统已用容量不必相等？
