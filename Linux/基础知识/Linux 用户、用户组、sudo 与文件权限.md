@@ -10,7 +10,7 @@ tags:
   - sudo
   - umask
 created: 2026-07-17T00:48:00
-updated: 2026-08-22T19:52:15
+updated: 2026-08-22T20:16:05
 ---
 
 Linux 文件权限解决的是：**一个进程以什么身份，对某个文件系统对象执行某项操作时，系统是否允许**。进程是程序一次运行形成的执行实例；进程、程序和服务的区别见 [[Linux 进程与系统资源常用命令]]。
@@ -814,12 +814,22 @@ project/
 
 例如，只看 group 这一组三位：程序请求的 `6` 是 `rw-`，二进制为 `110`；mask 的 `2` 是 `-w-`，二进制为 `010`。在这三位中对 mask 取反得到 `101`，再计算 `110 & 101 = 100`，结果是 `r--`，也就是数字 `4`。同一个规则分别应用到 owner、group、others 三组，才得到完整 mode。
 
-常见情况下：
+#### 常见创建操作怎样得到初始 mode
 
-- 创建普通文件的程序请求 `0666`，不默认请求执行位。
-- 创建目录的程序请求 `0777`，因为目录需要 `x` 才能正常穿过。
+这里的“创建基准”是程序在创建新对象时请求的 mode，“实际初始 mode”才是创建过程应用 `umask`、默认 ACL 等规则后写入对象元数据的结果。因此，“默认权限”不是脱离创建命令、创建进程和父目录状态后仍然固定不变的单个数字。
 
-程序可以主动请求更严格的 mode，所以 umask 决定的是上限，不保证每个程序都得到表中恰好相同的结果。
+下表还会区分两类链接：硬链接（hard link）是同一个文件对象的另一个名称；符号链接则是保存另一段路径引用的独立对象。两者的对象边界不同，所以不能因为都由 `ln` 创建，就用同一条权限公式解释。
+
+在目标原本不存在的普通 Linux 场景中，可以先用下表建立命令与权限来源的对应关系：
+
+| 常见创建操作 | 这次操作新增什么 | 初始 mode 的普通来源 | 关键结论 |
+| --- | --- | --- | --- |
+| `mkdir DIRECTORY`，未使用 `-m` | 拥有独立元数据的新目录 | 通常请求 `0777`，再计算 `0777 & ~umask` | `umask` 为 `0022` 时通常得到 `0755` |
+| `touch FILE` 创建不存在的文件，或 Shell 使用 `>` 创建新文件 | 拥有独立元数据的新普通文件 | 通常请求 `0666`，再计算 `0666 & ~umask` | `umask` 为 `0022` 时通常得到 `0644`；不会凭空增加执行位 |
+| `ln -s TARGET LINK` | 保存目标路径的新普通符号链接 | Linux 普通符号链接自身固定显示为 `0777`，其普通权限位不参与访问检查 | 不能把它解释成普通目录经过 `0777 & ~umask` 后的结果 |
+| `ln EXISTING_FILE HARD_LINK` | 指向已有 inode 的新目录项，不产生具有独立 mode 的新文件对象 | 原名称和新硬链接共享同一个 inode 及其 mode | 硬链接没有一套单独的“默认权限”，也不会因创建链接而重新应用 `umask` |
+
+只看表中前两类新对象，并假设程序分别请求 `0666` 与 `0777` 时，常见结果如下：
 
 | umask | 普通文件常见结果 | 目录常见结果 | 被屏蔽的主要权限 |
 | --- | --- | --- | --- |
@@ -833,6 +843,15 @@ project/
 普通文件：0666 & ~0027 = 0640
 目录：    0777 & ~0027 = 0750
 ```
+
+这条主线还有以下边界：
+
+- 程序可以主动请求比 `0666` 或 `0777` 更严格的 mode，所以 `umask` 决定的是上限，不保证每个程序都得到表中恰好相同的结果。
+- `touch` 面对已有文件时主要更新时间戳；Shell 的 `>` 面对已有普通文件时通常打开并截断内容。两种情况都不是创建一个全新文件对象，因此不会根据当前 `umask` 重新计算已有对象的 mode。
+- `mkdir -m MODE` 显式指定目标 mode，`mkdir -p` 还可能创建缺失的中间目录；带这些选项时必须继续查看目标实现的 `mkdir --help` 与手册，不能把第一行无条件套到所有新目录。
+- 父目录存在默认 ACL、父目录的 setgid 影响新对象所属组或新目录的特殊权限位，或程序在创建后又调用 `chmod` 时，最终观察到的完整 mode 和所属组还可能继续变化。结果不一致时按本节后面的排查顺序取证。
+
+`mkdir` 与 `touch` 的创建和已有对象边界见 [[Linux 文件与目录常用命令#5.1 创建文件和目录|创建文件和目录]]；`>` 由 Shell 处理的过程见 [[Shell 标准流、管道、重定向与退出状态]]。
 
 #### 022 与 0022 表示相同的 mask
 
@@ -1223,7 +1242,8 @@ sudo -v
 - [ ] 能区分 `chmod`、`chown`、`chgrp`、`sudo`、`umask` 和 `install -m` 修改的状态。
 - [ ] 面对符号链接时，能区分“修改链接还是指向对象”与“递归时是否沿链接进入目录树”两个问题，知道小写 `-h` 与大写 `-H`、`-L`、`-P` 的职责不同，并记录实际被修改对象的状态。
 - [ ] 能说明 `umask` 没有固定倒计时，并解释当前 Shell、子 Shell、子进程和新登录会话的生效边界。
-- [ ] 能解释 `022` 与 `0022` 为什么等价，并推导 `0027` 下常见文件和目录结果。
+- [ ] 能解释 `022` 与 `0022` 为什么等价，并从 `mkdir` 与普通文件创建时请求的 mode 推导当前 `umask` 下的常见初始权限。
+- [ ] 能说明 Linux 普通符号链接自身为什么固定显示为 `0777`，以及硬链接为什么没有独立的默认 mode。
 - [ ] 能读懂 `sudo -l` 中的匹配 Defaults 与 `(ALL : ALL) ALL`，并说明它们分别描述执行设置和命令授权。
 - [ ] 能使用 `sudo --version`、`sudo -l`、`sudo -v`、`sudo -k`，且会先确认本机实现和帮助。
 - [ ] 能说明 `sudo -i` 为什么通常进入目标用户家目录并读取登录启动文件，知道 `exit` 与 `sudo -k` 结束的是不同状态，也知道只有获得授权后才能通过 `-u` 选择其他目标用户。
@@ -1234,7 +1254,7 @@ sudo -v
 
 ## 官方参考资料
 
-以下通用资料于 **2026-07-25** 核对；`sudo -i` 的登录 Shell 语义、Ubuntu 25.10 起的 sudo 默认提供者与 sudoers 授权规则于 **2026-08-21** 重新核对；Linux 普通符号链接的元数据边界、GNU Coreutils 9.5 的 `chmod` 链接选项、9.11 的递归默认行为以及 `install -d` 的父目录 mode 于 **2026-08-22** 核对：
+以下通用资料于 **2026-07-25** 核对；`sudo -i` 的登录 Shell 语义、Ubuntu 25.10 起的 sudo 默认提供者与 sudoers 授权规则于 **2026-08-21** 重新核对；Linux 普通符号链接与硬链接的元数据边界、GNU Coreutils 9.5 的 `chmod` 链接选项，以及 GNU Coreutils 9.11 的 `mkdir`、`touch`、`ln`、递归遍历与 `install -d` 行为于 **2026-08-22** 核对：
 
 - [Ubuntu Server：用户管理](https://ubuntu.com/server/docs/how-to/security/user-management/)
 - [Ubuntu 25.10 发布说明：sudo-rs and sudo](https://documentation.ubuntu.com/release-notes/25.10/)
@@ -1247,6 +1267,9 @@ sudo -v
 - [Linux man-pages：acl(5)](https://man7.org/linux/man-pages/man5/acl.5.html)
 - [Linux man-pages：capabilities(7)](https://man7.org/linux/man-pages/man7/capabilities.7.html)
 - [GNU Coreutils：File permissions](https://www.gnu.org/software/coreutils/manual/html_node/File-permissions.html)
+- [GNU Coreutils：mkdir invocation](https://www.gnu.org/software/coreutils/manual/html_node/mkdir-invocation.html)
+- [GNU Coreutils：touch invocation](https://www.gnu.org/software/coreutils/manual/html_node/touch-invocation.html)
+- [GNU Coreutils：ln invocation](https://www.gnu.org/software/coreutils/manual/html_node/ln-invocation.html)
 - [GNU Coreutils：install invocation](https://www.gnu.org/software/coreutils/manual/html_node/install-invocation.html)
 - [GNU Coreutils：stat invocation](https://www.gnu.org/software/coreutils/manual/html_node/stat-invocation.html)
 - [GNU Coreutils：chmod invocation](https://www.gnu.org/software/coreutils/manual/html_node/chmod-invocation.html)
@@ -1262,6 +1285,9 @@ sudo -v
 也可以在目标 Linux 主机上按需查询：
 
 ```bash
+man 1 mkdir
+man 1 touch
+man 1 ln
 man 1 chmod
 man 1 chown
 man 1 chgrp
