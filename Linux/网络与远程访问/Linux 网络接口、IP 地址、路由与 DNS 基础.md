@@ -10,7 +10,7 @@ tags:
   - 网络/基础
   - TCP/IP
 created: 2026-07-18T19:52:31
-updated: 2026-07-26T17:17:23
+updated: 2026-08-23T15:20:43
 ---
 
 本文从一台 Linux 主机的视角，解释网络接口、MAC 地址、IP 地址与子网前缀、DHCP、默认路由和 DNS 之间的关系。目标是能读懂 Ubuntu Server 安装器与常用验证命令，并在修改配置前先定位出问题所在层。
@@ -215,6 +215,8 @@ curl -I --max-time 15 https://archive.ubuntu.com/
 
 `curl` 会读取 `http_proxy`、`HTTPS_PROXY` 和 `ALL_PROXY` 等代理环境变量。命令成功说明当前应用访问路径可用，但这条路径可能经过代理；如果目标是验证直接访问，还需要单独核对当前代理配置。
 
+这里的“出站代理”是指 `curl` 等客户端进程先连接代理服务，再由代理转发对外请求。代理不会让“完成一次 HTTPS 请求”反过来证明原始直连路由可用；当前 Shell、`sudo` 启动的命令和 systemd 后台服务也可能读取不同配置。如需做直连与代理对照，再进入 [[Linux 开发环境出站代理配置与分层排查]]；本篇继续只负责接口、地址、路由和 DNS 基础。
+
 ## 9. Ubuntu 如何保存并应用网络配置：Netplan
 
 前面使用的 `ip -brief address`、`ip route` 和 `resolvectl status` 主要用于查看当前已经生效的网络状态。但 Ubuntu 还需要描述：下次开机时，某块接口应该继续使用 DHCP，还是应该配置静态地址、路由和 DNS。
@@ -311,6 +313,7 @@ Netplan 可以描述 DHCP、静态地址、路由、DNS、bond 和桥接等 Ubun
 - 从实际客户端测试 TCP 端口：[[TCP 端口连通性测试与 nc 命令基础]]
 - 理解 SSH 连接并验证 OpenSSH 服务与登录：[[OpenSSH 密钥登录、服务端配置与排查]]
 - 理解主机入站规则：[[Linux 主机防火墙与 UFW 基础]]
+- 验证开发工具直连与出站代理：[[Linux 开发环境出站代理配置与分层排查]]
 - 跨局域网扩展访问：[[使用 Tailscale 访问 Linux 主机]]
 
 ## 官方参考资料

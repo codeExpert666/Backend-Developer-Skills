@@ -13,7 +13,7 @@ tags:
   - Java/Maven
   - Docker/验证
 created: 2026-07-16T00:29:35
-updated: 2026-07-26T23:28:30
+updated: 2026-08-23T15:20:43
 ---
 
 本文负责把 EventHub Go 与 Java 仓库放入 Ubuntu 本地文件系统，并按迁移后 revision 的真实工程入口完成首次构建、测试和质量门禁。
@@ -22,6 +22,9 @@ updated: 2026-07-26T23:28:30
 
 > [!warning] 本文是执行手册，不是成功记录
 > 命令、版本和工程入口的核对日期为 **2026-07-16**。仓库之后可能变化；每次执行都必须重新读取 README、Makefile、CI、`go.mod`、`pom.xml` 和 Wrapper。真实 SHA、退出码、PASS/SKIP 与失败原因写入新的日期化执行记录。
+
+> [!info] 出站消费者增量核对
+> 本文于 **2026-08-23** 仅对与代理范围直接相关的已跟踪工程入口做了增量核对：Go 依赖、npx OpenAPI 门禁与 Docker 构建，Java Maven Wrapper、依赖解析与 Docker 构建都会产生独立出站请求。这不会把其他 2026-07-16 事实自动刷新为当前事实；执行时仍要全量重查。
 
 > [!tip] 先拆 Shell，再识别项目 CLI
 > 阅读较长代码块时，先按 [[Linux 命令行学习路线与命令地图]] 区分 Shell 语法、命令、选项与参数；变量、判断和循环见 [[Shell 脚本阅读基础]]，管道、重定向和退出状态见 [[Shell 标准流、管道、重定向与退出状态]]。
@@ -35,6 +38,7 @@ updated: 2026-07-26T23:28:30
 - 已按 [[EventHub 工程化第 1 阶段环境与版本基线]] 准备 Ubuntu、Git、Go、JDK、Maven、Docker、Compose 和必要的 Node.js。
 - Mac mini 能按 [[OpenSSH 密钥登录、服务端配置与排查]] 稳定登录虚拟机。
 - `$HOME/src` 位于 Ubuntu 本地文件系统，符合 [[Linux 开发工作区与本地文件系统规划]]。
+- 已按 [[Linux 开发环境出站代理配置与分层排查]] 读取基础网络与旧配置，先建立直连结果；确实需要代理时，代理来源、发起请求的进程和回退方法已明确。
 - 已在源机器记录两个仓库的远程、分支、SHA、ahead/behind 和工作区状态。
 - 已区分远端可获得内容与只存在于源机器的工作现场。
 
@@ -47,6 +51,20 @@ $HOME/src/
 ```
 
 这里的 `$HOME` 属于 Ubuntu 开发用户。不要沿用 macOS 绝对路径，也不要把项目长期放在 UTM 共享挂载中。
+
+### 1.1 先把出站请求对应到真正的进程
+
+直连时，客户端进程直接连接目标服务；使用出站代理时，客户端先连接代理服务，再由代理转发请求。同一次 EventHub 门禁会由多个进程分别访问网络，它们不必读取同一份配置：
+
+| 项目动作 | 真正的主要消费者 | 本阶段的最小证据 |
+| --- | --- | --- |
+| fresh clone、fetch、读取远程引用 | Git HTTPS 或 SSH 客户端 | `git ls-remote` 对真实远程成功，并区分网络路径与仓库权限 |
+| Go 依赖下载 | `go` 命令，必要时还会启动 Git | `go mod download` 对当前 `go.mod` 成功 |
+| Java 首次构建 | Maven Wrapper 下载步骤与随后的 Maven 进程 | Wrapper 版本可读，项目真实 Maven 入口完成 |
+| OpenAPI lint | npm 软件包客户端与 npx 工具执行器 | `make openapi-lint` 完整成功，不只停在 `npm ping` |
+| 镜像拉取与构建 | Docker daemon（后台服务）与镜像构建步骤 | 镜像拉取成功，且项目的 Docker 构建入口成功 |
+
+当前 Shell 的代理环境变量只能被后续子进程继承，不会自动进入 `sudo` 后的 APT、systemd 管理的 Docker daemon，也不会让虚拟机内的 `127.0.0.1` 指向 macOS。所以先在通用专题中完成直连与显式代理对照，再随本文逐个运行项目命令。代理失败时保留原始错误，不同时换镜像、关闭 TLS 校验或清理依赖缓存。
 
 ## 2. 为两个仓库分别选择迁移路线
 
@@ -255,6 +273,8 @@ awk '$1 == "toolchain" { print "toolchain directive=" $2; exit }' go.mod
 
 ### 5.2 依赖下载与原生构建
 
+进入本节前，应已为 Go 进程明确直连或经批准代理的路径。`GOPROXY` 选择依赖模块服务，HTTP 出站代理选择如何到达该服务；两者不能互相替代。
+
 **执行位置：Ubuntu 虚拟机（`$HOME/src/eventhub-go`）**
 
 ```bash
@@ -316,6 +336,8 @@ docker info >/dev/null &&
 验收要求是指定测试显示 `PASS`，不是只看到总退出码为 0，也不能接受因为 Docker 不可用而 `SKIP`。
 
 ### 5.5 OpenAPI 与生成物门禁
+
+本节的 `npx` 可能从 npm registry（npm 软件包服务）取得固定版本的命令行工具。即使 Go 依赖已经下载成功，仍需单独证明这条路径。
 
 **执行位置：Ubuntu 虚拟机（`$HOME/src/eventhub-go`）**
 
@@ -379,6 +401,8 @@ git fetch --no-tags origin \
 
 ### 5.6 Compose 与镜像构建
 
+Docker daemon 是 systemd 管理的后台服务，不会自动继承当前 SSH Shell 的代理变量。基础镜像拉取、Dockerfile 中的联网构建步骤和容器运行时是不同层次；本节至少验证前两层。
+
 **执行位置：Ubuntu 虚拟机（`$HOME/src/eventhub-go`）**
 
 ```bash
@@ -403,6 +427,8 @@ Java 与 Maven 安装、版本切换和仓库配置分别见：
 - [[Java 与 Maven 环境排障与维护]]
 
 ### 6.1 核对 JDK 与 Maven 实际使用版本
+
+首次执行 Maven Wrapper 时，它可能先下载 Maven 发行包，之后 Maven 才解析项目依赖与插件。两步都必须完成；单独一次 HTTPS 请求成功不能代替 Maven 门禁。
 
 **执行位置：Ubuntu 虚拟机（`$HOME/src/eventhub`）**
 
@@ -499,6 +525,8 @@ git diff --check
 | `quality-check` 或生成器修改文件 | 门禁本身包含写入式命令 | 保留并审查 diff；只有执行前确认为干净基线时才恢复 |
 | Java 无法运行 `./mvnw` | 当前 revision 没有 Wrapper或执行位丢失 | 使用真实 README 入口，或重新验证完整迁移 |
 | Compose 配置成功但 build/up 失败 | 静态解析不覆盖 daemon、架构、端口和健康检查 | 分层检查 Docker、镜像和服务日志 |
+| `curl` 成功，但 `go mod download`、Maven 或 `npx` 失败 | 真实工具的配置、依赖目标、认证或信任库不同 | 识别实际失败进程，用同一路径运行工具级最小验证 |
+| 当前 Shell 能访问，`docker pull` 失败 | Docker daemon 没有同样的代理、DNS 或证书信任 | 读取 daemon 配置与 systemd 环境，按 Docker 专题验证，不只重复 `export` |
 
 ## 9. 本篇完成标准
 
@@ -507,6 +535,7 @@ git diff --check
 - [ ] 两个仓库位于 Ubuntu 本地 `$HOME/src`。
 - [ ] 每个仓库的迁移路线与原因已记录。
 - [ ] 远程、分支、完整 SHA 和工作区状态已核对。
+- [ ] 直连或代理路径、配置来源与回退方法已记录，Git、Go、Maven、npx 和 Docker 的实际消费者均有对应证据。
 - [ ] Go 项目完成当前 revision 的构建、测试和质量门禁。
 - [ ] Go MySQL 集成测试明确显示 `PASS`。
 - [ ] Java 项目按当前 revision 的真实入口完成测试与打包。

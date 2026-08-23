@@ -11,7 +11,7 @@ tags:
   - Go/Linux
   - Go/Ubuntu
 created: 2026-07-16T00:31:00
-updated: 2026-07-26T22:44:42
+updated: 2026-08-23T15:20:43
 ---
 
 本文用于在 Ubuntu 上安装 Go 官方工具链，覆盖项目版本约束、CPU 架构、官方下载与 SHA-256 校验、安全切换、PATH、验证、升级、回滚和排障。
@@ -606,13 +606,16 @@ go env GOPROXY GOSUMDB GOPRIVATE GONOSUMDB GOINSECURE
 curl -I https://proxy.golang.org/
 ```
 
-在中国大陆或企业网络中，按组织批准的代理、私有 module 仓库和证书方案处理。不要把来源不明、可能失效的第三方镜像地址写入全局配置。
+`GOPROXY` 是 Go 命令用来选择 module 依赖服务的配置；HTTP 出站代理则决定 Go 进程怎样经过网络代理到达该服务。两者可以同时存在，但不能把更换 `GOPROXY` 当作对路由、证书或出站代理故障的通用修复。`go mod download` 进入 `direct` 路径时还可能启动 Git 等版本控制客户端，因此仍需识别实际失败进程。
+
+在中国大陆或企业网络中，按组织批准的代理、私有 module 仓库和证书方案处理。不要把来源不明、可能失效的第三方镜像地址写入全局配置。如需读取当前代理来源、做直连与显式代理对照，再按进程设置并回退，见 [[Linux 开发环境出站代理配置与分层排查#10. Go：HTTP 出站代理与 GOPROXY 不是一回事]]。
 
 ## 相关笔记
 
 - [[Linux 开发工作区与本地文件系统规划]]
 - [[Linux 用户、用户组、sudo 与文件权限]]
 - [[Git 凭据、SSH 与常见问题排查]]
+- [[Linux 开发环境出站代理配置与分层排查]]
 - [[EventHub 工程化第 1 阶段环境与版本基线]]
 - [[EventHub 仓库迁移与首次质量门禁]]
 

@@ -11,10 +11,10 @@ tags:
   - 开发环境
   - 版本基线
 created: 2026-07-17T00:48:00
-updated: 2026-07-26T23:28:30
+updated: 2026-08-23T15:20:43
 ---
 
-本文记录 EventHub 工程化第 1 阶段采用的具体环境决策。它不是通用安装教程；资源如何估算见 [[UTM 虚拟机资源规划]]，网络路径如何选择见 [[虚拟机网络模式与可达性]]，工具安装和系统原理通过对应技术笔记学习。
+本文记录 EventHub 工程化第 1 阶段采用的具体环境决策。它不是通用安装教程；资源如何估算见 [[UTM 虚拟机资源规划]]，网络路径如何选择见 [[虚拟机网络模式与可达性]]，开发工具的出站代理原理与操作见 [[Linux 开发环境出站代理配置与分层排查]]，其他工具安装和系统原理继续通过对应技术笔记学习。
 
 > [!info] 核对时间与状态
 > 本基线中的宿主机、仓库和工具事实核对于 **2026-07-16**。它是开始实施前的决策依据，不代表 UTM 虚拟机已经创建，也不代表项目已经在 Linux 中构建成功。执行前必须重新运行本文的核对命令。
@@ -73,9 +73,37 @@ test -d /Applications/OrbStack.app && printf 'OrbStack installed\n' || printf 'O
 | 客户机 | Ubuntu Server 24.04 LTS ARM64 | 与 Apple Silicon 架构一致，适合完整 Linux 服务和 systemd 学习 |
 | UTM 模式 | Virtualize | 同架构硬件虚拟化比 AMD64 模拟更适合日常开发 |
 | 网络主线 | UTM Shared Network | 宿主机与客户机互通，配置变量少 |
+| 客户机出站访问 | 先验证 Shared Network 上的直连；只在确有需要时配置可信代理 | 不假定 macOS 系统代理自动进入 Ubuntu，每个请求进程分别验证 |
 | SSH | 传统 OpenSSH | 直接学习 SSH 客户端、`sshd`、密钥和主机身份 |
 | Tailscale | 可选 | 只在需要 MacBook Air 外出访问时增加，不阻塞工程化第 1 阶段 |
 | 项目目录 | `$HOME/src/eventhub-go`、`$HOME/src/eventhub` | 使用 Linux 本地文件系统，不沿用 macOS 绝对路径或长期运行在共享挂载 |
+
+## 出站访问与代理决策
+
+出站代理是客户端进程先连接代理服务，再由代理转发对外请求的访问路径。它不是 UTM Shared Network 本身，也不是后续 Nginx 为 EventHub 接收请求时的反向代理。
+
+> [!info] 2026-08-23 项目入口增量核对
+> 本次只读检查了 Go 本地 checkout `45e80f9b814ce9937be9b3120ed48efdac8e1fda` 和 Java 本地 checkout `102f7fafc0f13a4c2b157defdf16c7dfb84ff8d8` 的已跟踪工程入口。未发现项目提交的可复用代理端点、凭据或工具配置。Java 仓库的已提交历史记录 `docs/ai/implementation/2026-05-23-java-21-baseline-implementation.md` 提到：某次 OrbStack Docker engine 在拉取镜像元数据时出现 TLS handshake timeout，改用本机代理后构建通过。这是对当时 OrbStack 构建路径的执行证据，不是新 Ubuntu 虚拟机必须使用代理的当前基线。上述两个提交标识也只用于定位本次读取的工作树，不证明它们已可从远程 fresh clone 获得。迁移时仍要重查远程可达的 revision、工作区和工程文件。
+
+本阶段的决策不是“必须设置代理”，而是“每条项目出站路径都可解释、可验证、可回退”：
+
+1. 先在不读取代理环境变量的情况下验证直连。
+2. 直连失败时，先识别发起失败请求的进程，再用明确、可信的代理对同一目标做一次性对照。
+3. 对照成功后只配置该工具或服务，不同时修改 Shell、APT、Git、Maven、npm 和 Docker。
+4. 以原始项目命令成功作为证据，不用一次 `curl` 成功替代真实门禁。
+5. 代理端点、凭据、机器专属例外列表与信任证书不进入项目仓库或公开执行记录。
+
+当前工程入口涉及的出站消费者为：
+
+| 消费者 | EventHub 中的触发点 | 必须单独证明什么 |
+| --- | --- | --- |
+| Git 客户端 | clone、fetch 或 `git ls-remote` | 当前远程协议、网络路径与读取权限可用 |
+| Go 命令 | `go mod download`、构建与测试期间的 module 下载 | HTTP 出站路径与 `GOPROXY` 的依赖来源选择已区分 |
+| Maven Wrapper 与 Maven | Wrapper 获取 Maven 3.9.16，随后解析 Java 依赖与插件 | Wrapper 下载和 Maven 仓库访问都已完成 |
+| npm/npx | Go 项目通过 npx 运行固定的 Redocly CLI 2.35.1 | 当前 npm registry 可达，真实 OpenAPI lint 入口成功 |
+| Docker daemon | 拉取基础镜像并为构建、Testcontainers 提供镜像 | daemon 的独立配置、镜像拉取与项目级构建都可用 |
+
+这些消费者不必读取同一份代理配置。具体命令、变量大小写、`NO_PROXY`（绕过代理的目标列表）、TLS 信任和回退见 [[Linux 开发环境出站代理配置与分层排查]]；EventHub 只在执行记录中保存“直连或代理”、配置来源、脱敏验证结论和回退结果。
 
 ## 项目工具版本矩阵
 
@@ -145,6 +173,7 @@ docker info
 - 虚拟化概念：[[虚拟机、客户机与 CPU 架构]]
 - UTM 资源：[[UTM 虚拟机资源规划]]
 - 虚拟机网络：[[虚拟机网络模式与可达性]]
+- 出站访问与代理：[[Linux 开发环境出站代理配置与分层排查]]
 - 创建虚拟机：[[使用 UTM 创建 Ubuntu Server 虚拟机]]
 - Ubuntu 初始化：[[Ubuntu Server 初始化与基础安全]]
 - SSH：[[OpenSSH 密钥登录、服务端配置与排查]]

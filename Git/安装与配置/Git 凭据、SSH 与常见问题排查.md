@@ -11,7 +11,7 @@ tags:
   - Git/HTTPS
   - Git/排障
 created: 2026-07-14T22:52:26
-updated: 2026-07-14T22:52:26
+updated: 2026-08-23T15:20:43
 ---
 
 本文说明 Git 已经安装且本地身份已配置后，如何安全访问远程仓库，并定位常见的 SSH、HTTPS、凭据与网络问题。它以 GitHub 为 SSH 示例平台，但“检查远程地址、保护私钥、使用系统凭据存储、验证真实访问权限”的原则同样适用于 GitLab、Gitea 和公司自建平台。
@@ -227,11 +227,23 @@ git config --show-origin --get-all credential.helper
 先检查是否存在历史代理或 Git HTTP 配置：
 
 ```bash
-git config --show-origin --get-regexp '^(http|https)\.' || true
-env | grep -iE '^(http|https|no)_proxy=' || true
+git config --show-origin --get-regexp \
+  '^(http\..*proxy|remote\..*\.proxy)$' || true
+
+for variable_name in \
+  http_proxy https_proxy all_proxy no_proxy \
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY; do
+  if printenv "$variable_name" >/dev/null; then
+    printf '%-12s set\n' "$variable_name"
+  else
+    printf '%-12s unset\n' "$variable_name"
+  fi
+done
 ```
 
-公司网络应使用组织提供的代理、根证书和代码平台地址。不要用 `http.sslVerify=false` 关闭 TLS 校验；这会掩盖证书与中间人风险，而不是修复网络问题。
+出站代理是 Git 客户端先连接代理服务，再由代理访问代码平台。Git HTTPS 远程与 Git SSH 远程使用不同协议：HTTP 代理配置不会自动修复 SSH 路径。上面的环境检查只显示变量是否存在，避免把可能含内部地址或凭据的值复制到公开记录；Git 配置输出仍可能含代理 URL，分享前必须脱敏。
+
+公司网络应使用组织提供的代理、根证书和代码平台地址。不要用 `http.sslVerify=false` 关闭 TLS 校验；这会掩盖证书与中间人风险，而不是修复网络问题。如果需要比较直连与代理、限定配置范围并回退，见 [[Linux 开发环境出站代理配置与分层排查#9. Git：先区分 HTTPS 远程和 SSH 远程]]。
 
 ## 6. 认证成功后的日常工作
 
