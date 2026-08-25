@@ -10,10 +10,10 @@ tags:
   - Git/提交
   - Git/协作
 created: 2026-07-14T22:52:26
-updated: 2026-07-14T22:52:26
+updated: 2026-08-25T22:38:17
 ---
 
-本文在 Git 已安装的前提下，配置个人提交身份与一组保守、易验证的日常默认行为。它适用于 Ubuntu 与 macOS；平台差异主要出现在安装和凭据存储，参见 [[Ubuntu 从零安装 Git]]、[[macOS 从零安装 Git]] 与 [[Git 凭据、SSH 与常见问题排查]]。
+本文在 Git 已安装的前提下，配置个人提交身份、完成第一次本地提交，并按需设置一组保守的日常默认行为。它适用于 Ubuntu 与 macOS；平台差异主要出现在安装和凭据存储，参见 [[Ubuntu 从零安装 Git]]、[[macOS 从零安装 Git]] 与 [[Git 凭据、SSH 与常见问题排查]]。
 
 配置前先确认：个人偏好写在 global，某个仓库或工作身份的例外写在 local，项目的 `.gitattributes`、`CONTRIBUTING.md`、提交钩子和团队规范优先于个人习惯。
 
@@ -23,9 +23,11 @@ updated: 2026-07-14T22:52:26
 | --- | --- | --- |
 | 提交身份 | 姓名和邮箱正确，且可区分个人与工作身份 | `git config --show-origin --get-all user.email` |
 | 新仓库 | 初始分支名明确，不依赖 Git 版本默认值 | `git config --global --get init.defaultBranch` |
-| 拉取远程 | 远程已删除的跟踪分支会被清理；发生分叉时不会悄悄创建合并提交 | `git config --global --get fetch.prune`、`git config --global --get pull.ff` |
+| 本地验证 | 在独立练习仓库完成第一次提交，并确认作者、提交者和当前分支 | `git log -1 --format=fuller`、`git branch --show-current` |
 | 工具体验 | 编辑器、颜色与少量别名符合预期 | `git var GIT_EDITOR`、`git st` |
 | 配置可追溯 | 能看到每项设置来自哪个文件 | `git config --list --show-origin` |
+
+远程协作配置是按需内容，不是完成本地主线的前提。只有开始连接远程仓库时，才继续本文最后的远程协作默认值。
 
 ## 1. 先理解配置范围与优先级
 
@@ -42,8 +44,8 @@ Git 配置不只有一个文件。常见来源如下：
 
 ```bash
 git config --list --show-origin
+git config --show-origin --get-all user.name
 git config --show-origin --get-all user.email
-git config --show-origin --get-all pull.ff
 ```
 
 `--show-origin` 会显示配置来自哪个文件。对受团队管理的设备，不要擅自修改 system 配置；对工作仓库，也不要为了个人便利覆盖团队明确规定的 local 配置。
@@ -101,7 +103,7 @@ git config --global --get init.defaultBranch
 
 ## 4. 选择 Git 编辑器
 
-Git 在编辑合并说明、提交正文或 rebase 计划时会调用编辑器。没有设置时，Git 会选择环境中的默认编辑器；初学者常因意外进入 Vim 而以为 Git 卡住了。
+Git 在编辑提交正文、合并说明或其他交互式操作时会调用编辑器。没有设置时，Git 会选择环境中的默认编辑器；初学者常因意外进入 Vim 而以为 Git 卡住了。
 
 若只想使用终端中的简单编辑器，可设置为 `nano`：
 
@@ -119,89 +121,52 @@ git var GIT_EDITOR
 
 `--wait` 很重要：它让 Git 等待编辑器窗口关闭后再继续。不要设置一个当前终端找不到的命令；先运行 `command -v code` 或 `command -v nano` 验证。团队项目若通过环境变量或脚本指定编辑器，应优先使用项目约定。
 
-## 5. 设置保守的日常协作默认值
+## 5. 用独立练习仓库完成第一次本地提交
 
-以下设置不替代团队工作流，但能让意外情况更早显现：
+前四节主要是在写入和检查配置。现在用一个全新的本地仓库确认这些配置确实会作用于提交，同时建立后续学习需要的最小模型：
+
+| 对象 | 作用 | 本节如何观察 |
+| --- | --- | --- |
+| 工作区 | 保存当前正在编辑的文件 | 创建并修改 `README.md` |
+| 暂存区 | 选择下一次提交要记录的内容 | `git add README.md` |
+| 提交 | 保存一次带作者、提交者和说明的版本快照 | `git commit`、`git log` |
+| 当前分支 | 指向当前工作所在的提交历史 | `git branch --show-current` |
+
+下列命令只用于个人练习目录，不要在已有项目中执行。先只读检查目标目录是否已经存在：
 
 ```bash
-git config --global fetch.prune true
-git config --global pull.ff only
-git config --global color.ui auto
+PRACTICE_REPO="$HOME/git-learning/git-config-check"
+if test -e "$PRACTICE_REPO"; then
+  printf '目标目录已经存在，请更换路径：%s\n' "$PRACTICE_REPO"
+else
+  printf '目标目录尚不存在，可以继续：%s\n' "$PRACTICE_REPO"
+fi
 ```
 
-| 配置 | 作用 | 为什么是保守选择 | 需要注意什么 |
-| --- | --- | --- | --- |
-| `fetch.prune=true` | `git fetch` 时清理远程已经删除的远程跟踪分支 | 减少 `origin/feature/...` 过期引用造成的误判 | 不会删除你的本地分支或未提交改动 |
-| `pull.ff=only` | `git pull` 只允许快进更新 | 本地与远程分叉时停止并要求你主动决定 merge 或 rebase | 若团队默认 rebase，应按团队规则配置相应分支或 local 设置 |
-| `color.ui=auto` | 在支持颜色的终端中显示更易读的输出 | 对非交互重定向通常不会强行插入颜色控制符 | 多数新版 Git 已有合理默认值，设置它主要是显式化意图 |
-
-`pull.ff=only` 失败并不是“Git 坏了”，而是提醒本地与远程出现了各自独有的提交。此时先用 `git status`、`git log --oneline --left-right HEAD...@{upstream}` 理解差异，再按 [[Git 分支与 PR 工作流]] 或团队约定选择后续动作。
-
-不要在不了解团队历史策略时，直接全局设置 `pull.rebase=true`。它会改变 `git pull` 的整合方式，尤其不适合刚接触 Git、仍不清楚哪些提交已推送并被他人依赖的场景。
-
-## 6. 换行符：先服从项目规则，再谈全局设置
-
-Ubuntu 和 macOS 的日常文本文件通常使用 LF 换行。真正决定仓库中文本、二进制文件和换行符策略的最佳位置是版本受控的 `.gitattributes`，因为它能随仓库被所有协作者获取。
-
-先在仓库根目录检查项目是否已有规则：
+只有看到“目标目录尚不存在”时才继续。若目录已经存在，应修改 `PRACTICE_REPO`，而不是覆盖或清理原目录：
 
 ```bash
-git ls-files -- .gitattributes
-git check-attr -a -- README.md
-```
-
-如果项目已经有 `.gitattributes`，不要为了解决一次差异而随意设置全局 `core.autocrlf`。先阅读项目规则，并与团队确认。
-
-对个人新仓库、明确希望“提交时把 CRLF 规范为 LF，检出时不改为 CRLF”的 Unix 用户，可按需设置：
-
-```bash
-git config --global core.autocrlf input
-git config --global core.safecrlf warn
-```
-
-`core.autocrlf=input` 不会在检出时把文件改成 CRLF；`core.safecrlf=warn` 会在可能出现不可逆换行转换时提示。它们并不适合每个仓库，更不能修复已经混乱的历史。已有仓库突然出现大量整文件差异时，先停止批量格式化，检查 `.gitattributes`、编辑器设置和实际换行符，再做最小范围修复。
-
-## 7. 添加少量可解释的别名
-
-别名只是缩短命令，不会增加 Git 能力。建议从语义清楚、没有副作用的别名开始：
-
-```bash
-git config --global alias.st status
-git config --global alias.sw switch
-git config --global alias.br branch
-git config --global alias.last "log -1 --stat"
-git config --global alias.graph "log --oneline --graph --decorate --all"
-```
-
-验证：
-
-```bash
-git config --global --get-regexp '^alias\.'
-# 在任意 Git 仓库中执行：
-git st
-git graph
-```
-
-不要把 `reset --hard`、`push --force`、`clean -fd` 等破坏性操作包装成短别名。命令越短越容易在错误的仓库执行；这类动作应保持显式，并在执行前先检查 `git status`。
-
-## 8. 用独立练习仓库验证配置
-
-不要在重要项目第一次试验身份、编辑器或换行符设置。可以在个人练习目录创建一个全新的仓库：
-
-```bash
-mkdir -p "$HOME/git-learning/git-config-check"
-cd "$HOME/git-learning/git-config-check"
+PRACTICE_REPO="$HOME/git-learning/git-config-check"
+mkdir -p "$PRACTICE_REPO"
+cd "$PRACTICE_REPO"
 git init
 git branch --show-current
 printf '# Git configuration check\n' > README.md
+git status
 git add README.md
+git diff --staged
 git commit -m "docs: verify initial Git configuration"
+git status --short --branch
 git log -1 --format=fuller
 ```
 
-检查提交里的 Author 与 Commit 是否符合预期。若 `git commit` 打开了不熟悉的编辑器，可以退出而不保存，再回到“选择 Git 编辑器”部分调整 `core.editor`。确认练习成功后，才在真实仓库中开始工作。
+`git init` 只创建本地仓库，不会连接 GitHub、GitLab 或其他远程平台。提交成功后，`git status` 应显示工作区干净；`git log -1 --format=fuller` 中的 Author 与 Committer 应符合前面设置的身份；当前分支名应符合 `init.defaultBranch`。
 
-## 9. 查看、修改与撤销一项配置
+如果提交因身份缺失而失败，回到“首先设置提交身份”检查 `user.name` 和 `user.email` 的值与来源。若分支名不符合预期，确认这个仓库是否确实是在设置 `init.defaultBranch` 之后新建的；该配置不会重命名已有仓库。
+
+练习仓库可以保留给后续 Git 操作使用。本文不提供自动删除命令；如果以后决定清理，应先再次确认实际路径和其中的文件。
+
+## 6. 查看、修改与撤销一项配置
 
 查看单个值及其来源：
 
@@ -224,9 +189,122 @@ git config --global --edit
 
 编辑前建议先备份文件，例如 `cp ~/.gitconfig ~/.gitconfig.backup`。不要用文本编辑器删除不了解的 system 或公司管理配置；也不要把包含令牌、密码或私钥内容的配置复制到聊天、Issue 或公开仓库。
 
+## 7. 换行符：先服从项目规则，再谈全局设置
+
+Ubuntu 和 macOS 的日常文本文件通常使用 LF 换行。真正决定仓库中文本、二进制文件和换行符策略的最佳位置是版本受控的 `.gitattributes`，因为它能随仓库被所有协作者获取。
+
+先在仓库根目录检查项目是否已有规则：
+
+```bash
+git ls-files -- .gitattributes
+git check-attr -a -- README.md
+```
+
+如果项目已经有 `.gitattributes`，不要为了解决一次差异而随意设置全局 `core.autocrlf`。先阅读项目规则，并与团队确认。
+
+对个人新仓库、明确希望“提交时把 CRLF 规范为 LF，检出时不改为 CRLF”的 Unix 用户，可按需设置：
+
+```bash
+git config --global core.autocrlf input
+git config --global core.safecrlf warn
+```
+
+`core.autocrlf=input` 不会在检出时把文件改成 CRLF；`core.safecrlf=warn` 会在可能出现不可逆换行转换时提示。它们并不适合每个仓库，更不能修复已经混乱的历史。已有仓库突然出现大量整文件差异时，先停止批量格式化，检查 `.gitattributes`、编辑器设置和实际换行符，再做最小范围修复。
+
+## 8. 改善终端输出并添加少量别名
+
+### 在交互式终端中显示颜色
+
+`color.ui=auto` 会在支持颜色的交互式终端中显示更易读的输出，对重定向到文件等非交互场景通常不会强行插入颜色控制符。
+
+```bash
+git config --global color.ui auto
+git config --global --get color.ui
+```
+
+多数新版 Git 已有合理的颜色默认值；显式设置它主要是记录个人意图，不影响提交历史或远程协作策略。
+
+### 添加少量可解释的别名
+
+别名只是缩短命令，不会增加 Git 能力。建议从语义清楚、没有副作用的别名开始：
+
+```bash
+git config --global alias.st status
+git config --global alias.sw switch
+git config --global alias.br branch
+git config --global alias.last "log -1 --stat"
+git config --global alias.graph "log --oneline --graph --decorate --all"
+```
+
+验证：
+
+```bash
+git config --global --get-regexp '^alias\.'
+# 在任意 Git 仓库中执行：
+git st
+git graph
+```
+
+不要把 `reset --hard`、`push --force`、`clean -fd` 等破坏性操作包装成短别名。命令越短越容易在错误的仓库执行；这类动作应保持显式，并在执行前先检查 `git status`。
+
+## 9. 按需设置保守的远程协作默认值
+
+本节不是本地配置主线的前提。只有在完成前面的本地提交练习，并准备连接远程仓库时再继续。远程地址、网络连接、HTTPS 或 SSH 身份验证的边界见 [[Git 凭据、SSH 与常见问题排查]]；日常分支操作见 [[Git 分支与 PR 工作流]]。
+
+### 先建立最小远程模型
+
+远程仓库是位于代码托管平台或另一台服务器上的独立仓库，`origin` 只是最常见的远程名称。`git fetch` 会获取远程的新提交和分支状态，并把它们记录为 `origin/main` 一类远程跟踪引用；它不会直接把这些提交写入当前分支。
+
+在日常远程协作中，上游分支（upstream）通常是当前本地分支默认拉取和比较的远程跟踪分支，例如本地 `main` 对应的 `origin/main`。`git pull` 会先执行 fetch，再把上游分支整合进当前分支。整合前只需先区分两种情况：
+
+| 历史关系 | 含义 | 保守处理 |
+| --- | --- | --- |
+| 当前分支没有独有提交，上游单方面领先 | 可以快进，只需移动当前分支指针 | 允许 pull 完成 |
+| 当前分支与上游都有独有提交 | 历史已经分叉，需要选择 merge 或 rebase | 先停止，再按团队规则判断 |
+
+快进（fast-forward）不会创建新提交；它只是把当前分支指针移动到已经存在的较新提交。merge 与 rebase 如何改变历史、发生冲突后如何继续或中止，统一见 [[Git 合并方式与 Cherry-pick]]。
+
+### 获取时清理过期的远程跟踪引用
+
+设置 `fetch.prune=true` 后，每次 `git fetch` 都会清理远程已经删除的远程跟踪引用：
+
+```bash
+git config --global fetch.prune true
+git config --global --get fetch.prune
+```
+
+这里清理的是 `origin/feature/...` 一类本地保存的远程状态，不是本地分支，也不会删除工作区中的未提交改动。它不能替代删除本地分支前的人工确认。
+
+### 分叉时停止自动整合
+
+设置 `pull.ff=only` 后，普通的 `git pull` 只接受可以快进的结果；如果当前分支与上游已经分叉，pull 会停止，不替你选择 merge 或 rebase：
+
+```bash
+git config --global pull.ff only
+git config --global --get pull.ff
+```
+
+本文不全局设置 `pull.rebase`。是否采用 merge 或 rebase 会影响提交图和共享历史，应在理解 [[Git 合并方式与 Cherry-pick]] 并确认团队规则后再决定。
+
+### 验证配置来源与失败边界
+
+检查最终值及其来源：
+
+```bash
+git config --show-origin --get-all fetch.prune
+git config --show-origin --get-all pull.ff
+git config --show-origin --get-all pull.rebase
+```
+
+第三条命令没有输出，通常表示尚未设置通用的 rebase 默认值；如果有输出，应先根据来源文件判断它来自 global、local 还是其他范围，不要直接覆盖不了解的团队配置。
+
+这些命令只能证明配置值和来源，不能证明某个远程仓库已经可访问。真正的 fetch、pull 和分叉处理应在已经配置远程地址与认证的练习仓库中验证，并按 [[Git 分支与 PR 工作流]] 执行。
+
+`pull.ff=only` 因无法快进而失败时，当前分支的提交历史与工作区不会被这次整合改写，但前面的 fetch 阶段可能已经更新远程跟踪引用。先运行 `git status`，再按 [[Git 分支与 PR 工作流]] 中的“`git pull --ff-only` 失败怎么办？”检查差异；不要为了消除报错而直接强制合并、变基或丢弃提交。
+
 ## 下一步
 
-完成本文后，可进入 [[Git 分支与 PR 工作流]] 学习从 `main` 创建功能分支、提交并发起 PR；提交标题和正文规范见 [[Git 提交消息编写规范]]。如果已经需要连接远程仓库，请继续 [[Git 凭据、SSH 与常见问题排查]]。
+完成本文的本地主线后，如果需要连接 GitHub、GitLab 或其他远程平台，先阅读 [[Git 凭据、SSH 与常见问题排查]]。确认远程访问可用后，再进入 [[Git 分支与 PR 工作流]] 学习从 `main` 创建功能分支、提交并发起 PR；提交标题和正文规范见 [[Git 提交消息编写规范]]；需要选择和恢复合并方式时阅读 [[Git 合并方式与 Cherry-pick]]。
 
 ## 官方参考资料
 

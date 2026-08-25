@@ -10,7 +10,7 @@ tags:
   - 开发环境
   - 排障
 created: 2026-08-23T14:45:03
-updated: 2026-08-23T15:25:29
+updated: 2026-08-25T16:02:16
 ---
 
 本文解释 Linux 开发机主动访问软件仓库、代码托管平台和镜像仓库时，如何判断是否需要出站代理，如何把代理配置交给真正发起请求的进程，以及如何验证和安全撤销配置。
@@ -149,15 +149,32 @@ systemd 是常见的 Linux 服务管理器。Docker daemon 等后台服务通常
 
 ### 4.5 Docker 还包含多个独立边界
 
-Docker CLI（命令行界面）是用户输入 `docker` 命令时运行的客户端；Docker daemon（后台守护进程，常见进程名为 `dockerd`）是实际管理镜像和容器的后台服务。一次 Docker 工作流还可能启动构建步骤或运行容器，因此至少存在：
+一次 Docker 操作同时包含“谁向谁发送控制命令”和“谁真正访问外部网络”两个问题，不能把它们当成同一条链路。
+
+Docker CLI（命令行界面）是用户输入 `docker` 命令时由当前 Shell 启动的客户端。它通常通过本机 socket（进程间通信端点）向 Docker daemon（后台守护进程，常见进程名为 `dockerd`）发送控制命令；真正管理镜像、构建和容器的是 daemon。构建镜像时，daemon 还会使用构建器执行 Dockerfile（描述镜像构建步骤的文件）中的步骤。
 
 ```text
-当前 Shell -> Docker CLI -> Docker daemon -> 镜像仓库
-                                ├── 镜像构建步骤
-                                └── 运行中的容器进程
+控制链路：
+当前 Shell -> Docker CLI -> Docker daemon
+
+可能真正访问外部网络的路径：
+Docker daemon 或构建器 -> 镜像仓库
+镜像构建步骤中的进程 -> 软件源或依赖仓库
+运行容器中的应用进程 -> 外部 API（应用程序编程接口）或其他服务
 ```
 
-Shell 能访问网页不代表 daemon 能拉取镜像；daemon 能拉取基础镜像也不代表镜像构建命令或最终运行的应用已经获得代理配置。
+把常见现象对应到这些边界，才能判断应该检查哪一层：
+
+| 现象 | 当前涉及的边界 | 首先检查什么 |
+| --- | --- | --- |
+| `docker version` 能显示 Client（CLI），但无法连接 Server（daemon） | Docker CLI 到 daemon 的控制链路 | daemon 是否运行、socket 权限和当前连接目标；不要先归因于出站代理 |
+| `docker pull` 或构建时拉取 Dockerfile 的 `FROM` 基础镜像失败 | daemon 或构建器到镜像仓库 | 这一层的代理、DNS、CA（证书颁发机构）信任和仓库访问策略 |
+| 基础镜像已拉取，但 Dockerfile 的 `RUN apt-get`、`RUN curl` 等步骤失败 | 镜像构建步骤中的进程到外部服务 | 构建期代理、DNS 和 CA 信任；daemon 能拉取镜像不能代替这项验证 |
+| 容器已启动，但其中的应用无法访问外部 API | 运行容器中的应用进程到外部服务 | 运行期环境变量、容器网络、DNS 和 `NO_PROXY` 例外；不要假设构建期配置会自动保留 |
+
+因此，当前 Shell 中的 `curl` 成功只证明当前 `curl` 进程的路径可用。Shell 代理变量不会因为 Docker CLI 继承了它们，就自动变成 systemd 管理的 daemon 配置、构建步骤配置或运行容器配置；只有通过 Docker 支持的对应机制明确传入或持久化后，相关层次才可能使用它们。
+
+日常排查时，先用 `docker version` 区分控制链路，再用 `docker pull` 验证镜像仓库路径，随后分别验证项目的真实构建步骤和容器应用请求。具体的读取、配置与撤销方法见 [[Linux 开发环境出站代理配置与分层排查#13. Docker：分别验证 daemon、构建步骤和运行容器|第 13 节]]。
 
 ## 5. 在修改前读取当前状态
 
@@ -341,9 +358,80 @@ unset PROXY_URL NO_PROXY_VALUE
 
 ### 7.4 不要默认写入所有 Shell 的启动入口
 
-把代理自动写入 Zsh 早期启动文件 `.zshenv`、系统级 Shell 启动配置或所有用户环境，会同时影响脚本、IDE 后端、非交互 SSH 和其他不需要代理的程序。个人开发机更适合先使用当前会话，确有高频需求时再提供显式的 `proxy_on`、`proxy_off` 辅助函数，而不是每次启动 Shell 自动启用。
+这里要区分两件事：**启动时定义函数**，只是让当前 Shell 多几个可用命令；**启动时直接 `export` 代理变量或调用 `proxy_on`**，才会让每个新 Shell 默认进入显式代理状态。日常开发通常只需要前者。
 
-机器专属代理地址应放入不跟踪的本机配置，不能进入共享 dotfiles（个人配置文件仓库）。Zsh 配置文件的加载时机和 `local.zsh` 边界见 [[Zsh 与 Antidote 跨机器配置管理]]。
+Zsh 不同启动文件的影响范围不同：
+
+| 写入方式 | 影响范围 | 日常建议 |
+| --- | --- | --- |
+| 在 `~/.zshenv` 中直接导出代理变量 | 每次启动 Zsh，包括脚本、IDE 后端和非交互 SSH | 避免；这一层的影响面过大 |
+| 在 `.zshrc` 或它加载的文件中自动调用 `proxy_on` | 每个新交互式 Zsh 都默认开启 | 通常避免；代理停止或地址变更时，新终端会集中出现超时 |
+| 在 `.zshrc` 或不跟踪的 `local.zsh` 中只定义开、关、查函数 | 启动时只加载函数，调用 `proxy_on` 后才影响当前 Shell 及其后续子进程 | 推荐 |
+
+如果系统的 VPN（虚拟专用网络）或 TUN（虚拟网络接口）已经透明处理出站流量，CLI 进程可能根本不需要额外的代理环境变量。只有第 6 节的 A/B 结果或真实工具验证表明“显式代理路径确实必要”时，再手动开启。
+
+下面是一组足够日常使用的 Zsh 辅助函数。机器专属代理地址应放入不跟踪的 `local.zsh`，不能进入共享 dotfiles（个人配置文件仓库）；代理 URL 也不应包含用户名或密码。
+
+```zsh
+# $ZDOTDIR/local.zsh；由交互式 .zshrc 加载，不进入 Git。
+typeset -g LOCAL_PROXY_URL='http://proxy.example.com:3128'
+typeset -g LOCAL_NO_PROXY='localhost,127.0.0.1,::1'
+
+proxy_on() {
+  case "$LOCAL_PROXY_URL" in
+    *@*)
+      print -u2 '停止：LOCAL_PROXY_URL 不应包含嵌入式凭据。'
+      return 1
+      ;;
+    http://*|https://*) ;;
+    *)
+      print -u2 '停止：请先设置有效的 HTTP 或 HTTPS 代理 URL。'
+      return 1
+      ;;
+  esac
+
+  export http_proxy="$LOCAL_PROXY_URL"
+  export https_proxy="$LOCAL_PROXY_URL"
+  export HTTP_PROXY="$LOCAL_PROXY_URL"
+  export HTTPS_PROXY="$LOCAL_PROXY_URL"
+  export no_proxy="$LOCAL_NO_PROXY"
+  export NO_PROXY="$LOCAL_NO_PROXY"
+  print '当前 Shell 已启用显式 HTTP/HTTPS 代理。'
+}
+
+proxy_off() {
+  unset http_proxy https_proxy all_proxy no_proxy
+  unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
+  print '当前 Shell 已撤销显式代理变量。'
+}
+
+proxy_status() {
+  local variable_name
+  for variable_name in \
+    http_proxy https_proxy all_proxy no_proxy \
+    HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY; do
+    if printenv "$variable_name" >/dev/null 2>&1; then
+      printf '%-12s set\n' "$variable_name"
+    else
+      printf '%-12s unset\n' "$variable_name"
+    fi
+  done
+}
+```
+
+把示例地址替换为已验证的本机地址后，新建一个交互式 Zsh，按以下顺序使用：
+
+```zsh
+proxy_status
+proxy_on
+curl -I --max-time 15 https://example.com/
+proxy_off
+proxy_status
+```
+
+`proxy_status` 只报告变量是否已导出，不打印代理地址或凭据。`proxy_off` 也只撤销当前 Shell 的显式代理；它不会停止 VPN、TUN 或独立的代理程序。如果只有一条命令需要代理，优先使用本文后续章节中的工具级一次性选项，用完无需再撤销整个会话。
+
+Zsh 配置文件的加载时机、`ZDOTDIR` 和 `local.zsh` 边界见 [[Zsh 与 Antidote 跨机器配置管理]]。Bash 也遵循“只加载函数、按需启用”的原则，但应根据实际的登录和交互启动链确认应放入哪个文件，不要直接照搬 Zsh 路径。
 
 ## 8. APT：系统软件包下载是独立消费者
 
