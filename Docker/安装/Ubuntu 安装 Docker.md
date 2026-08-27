@@ -10,7 +10,7 @@ tags:
   - Docker/Ubuntu
   - Docker/Engine
 created: 2026-07-13T22:43:39
-updated: 2026-07-30T00:29:42
+updated: 2026-08-27T09:22:22
 ---
 
 本文用于在 Ubuntu LTS 上安装 Docker Engine，适合本地 Linux 开发机、CI Runner 和服务器。若宿主机是 macOS 或 Windows，请先回到 [[Docker 安装概览]] 选择 Docker Desktop 路线；若 Ubuntu 是 WSL 2 中的发行版，先阅读 [[WSL 2 中安装 Docker Engine]]，确认自己没有同时使用 Docker Desktop integration。
@@ -148,6 +148,8 @@ newgrp docker
 ```
 
 代理地址、证书和 `no-proxy` 范围应由组织网络策略提供。不要把账号密码写进共享仓库、shell 历史或镜像构建参数。
+
+本节只覆盖 Docker daemon 拉取镜像时使用的代理配置。Dockerfile 的联网构建步骤和运行容器中的应用由不同进程发起请求，不能假设它们会继承 daemon 或当前 Shell 的代理配置；分层读取、验证与回退方法见 [[Linux 开发环境出站代理配置与分层排查#13. Docker：分别验证 daemon、构建步骤和运行容器]]。
 
 ## 验证
 

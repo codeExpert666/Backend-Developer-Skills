@@ -10,7 +10,7 @@ tags:
   - Maven/仓库
   - Maven/Wrapper
 created: 2026-07-14T23:30:24
-updated: 2026-07-14T23:41:06
+updated: 2026-08-27T09:22:22
 ---
 
 Apache Maven 安装完成后，即使没有创建 `settings.xml` 也能使用默认配置访问 Maven Central。只有在需要企业仓库、代理、认证、自定义本地仓库、Profile、Toolchains 或项目级 JVM 参数时，才应增加对应配置。
@@ -158,6 +158,8 @@ mvn -U -X help:effective-settings
 ```
 
 `-X` 会输出大量调试信息，可能包含内部主机名、仓库地址和环境细节。分享日志前必须脱敏。
+
+本节负责 Maven 原生的 `settings.xml` 代理配置。若要从 Linux 开发环境的整体出站路径判断是否需要代理、比较直连与显式代理，并区分 Maven Wrapper 下载与 Maven JVM 依赖解析，见 [[Linux 开发环境出站代理配置与分层排查#11. Maven：Wrapper 下载与依赖解析是两条连续路径]]。
 
 ## 6. 私有仓库认证
 
