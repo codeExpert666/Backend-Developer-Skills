@@ -1,0 +1,22 @@
+{
+  "session": {
+    "schemaVersion": 2,
+    "id": "session-019f790c-4e03-7358-be7d-3dea2025bde2",
+    "createdAt": 1784442277378,
+    "updatedAt": 1784442277378,
+    "subagents": {
+      "master": {
+        "id": "master",
+        "type": "master",
+        "status": "idle",
+        "createdAt": 1784442277378,
+        "timeline": [],
+        "pendingInputs": [],
+        "operations": {},
+        "toolTimings": {},
+        "subagents": {}
+      }
+    }
+  },
+  "title": "新对话"
+}

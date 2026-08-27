@@ -1,9 +1,15 @@
 {
-  "activeSessionId": "session-019f7903-ce86-70ba-9118-46a8046f01da",
+  "activeSessionId": "session-019f790c-4e03-7358-be7d-3dea2025bde2",
   "orderedSessionIds": [
+    "session-019f790c-4e03-7358-be7d-3dea2025bde2",
     "session-019f7903-ce86-70ba-9118-46a8046f01da"
   ],
   "sessions": {
+    "session-019f790c-4e03-7358-be7d-3dea2025bde2": {
+      "title": "新对话",
+      "createdAt": 1784442277378,
+      "updatedAt": 1784442277378
+    },
     "session-019f7903-ce86-70ba-9118-46a8046f01da": {
       "title": "新对话",
       "createdAt": 1784441720454,

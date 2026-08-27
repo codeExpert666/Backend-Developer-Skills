@@ -11,7 +11,7 @@ tags:
   - Git/HTTPS
   - Git/排障
 created: 2026-07-14T22:52:26
-updated: 2026-08-26T14:17:34
+updated: 2026-08-26T17:11:22
 ---
 
 本文说明 Git 已经安装并完成第一次本地提交后，如何通过 HTTPS 或 SSH 安全访问远程仓库，以及如何按连接阶段定位凭据、主机身份、网络和仓库权限问题。本文以 GitHub 为主要示例，但“远程 URL 选择协议、客户端保护秘密、平台验证账号、仓库权限决定读写”的边界同样适用于 GitLab、Gitea 和公司自建平台。
@@ -22,7 +22,7 @@ updated: 2026-08-26T14:17:34
 > `user.name` 和 `user.email` 决定提交历史显示的作者信息；HTTPS 令牌或 SSH 密钥用于向代码平台证明账号身份；平台再根据账号和仓库规则决定能否读取或推送。前一层成功，不能自动证明后一层也成功。
 
 > [!info] 核对日期与适用范围
-> 本文于 **2026-08-26** 核对 Git 官方 `gitcredentials`、`git-remote`、`git-ls-remote` 手册及 GitHub 的 HTTPS、SSH 与主机指纹文档。凭据帮助程序、平台登录流程和支持的密钥类型可能变化，应结合本机 `git --version`、`git help` 和目标平台当前文档重新确认。
+> 本文于 **2026-08-26** 核对 Git 官方 `gitcredentials`、`git-remote`、`git-ls-remote` 手册，OpenSSH 的 `ssh-agent`、`ssh_config` 手册，以及 GitHub 的 HTTPS、SSH、macOS Keychain 与主机指纹文档。凭据帮助程序、平台登录流程、系统会话提供的 agent 和支持的密钥类型可能变化，应结合本机 `git --version`、`git help`、OpenSSH 手册和目标平台当前文档重新确认。
 
 ## 完成标准
 
@@ -33,6 +33,7 @@ updated: 2026-08-26T14:17:34
 | 远程模型 | 能解释本地仓库、远程 URL、`origin`、网络、凭据和平台权限的关系 | 不代表已经配置任何账号 |
 | 协议选择 | 明确当前仓库使用 HTTPS 还是 SSH，并只配置所选路径 | 不代表另一条协议也可用 |
 | 账号认证 | HTTPS 登录完成，或 SSH 测试显示预期平台账号 | 不代表对任意仓库都有权限 |
+| SSH 日常使用 | 能区分私钥文件、客户端配置、agent 进程和口令存储，并选择当前系统适用的持久方式 | 不代表解密后的密钥应永久驻留内存 |
 | 仓库读取 | `git ls-remote` 能与目标仓库通信并读取远程引用 | 不代表拥有推送权限 |
 | 安全边界 | 令牌和私钥未进入远程 URL、仓库、笔记、截图或日志 | 不代表泄露后的凭据已经撤销 |
 
@@ -238,9 +239,21 @@ ls -l "$KEY_PATH" "$KEY_PATH.pub"
 ssh-keygen -lf "$KEY_PATH.pub"
 ```
 
-### 4.4 检查 SSH Agent，再决定是否启动或加载
+### 4.4 检查 SSH Agent，再选择临时恢复或日常配置
 
-SSH Agent 是客户端本地进程。`SSH_AUTH_SOCK` 指向当前 Shell 怎样联系 agent，`ssh-add -l` 列出 agent 已加载密钥的指纹，不会显示私钥内容：
+SSH Agent 是客户端本地进程，用于在一段会话生命周期内缓存可用身份，避免每次使用有口令的私钥都重新解锁。它不会替代磁盘上的私钥文件，也不会替代 `~/.ssh/config` 中的密钥选择规则。
+
+需要先区分三种容易混称为“持久化”的状态：
+
+| 状态 | 负责对象 | 跨新终端或重新登录后的边界 |
+| --- | --- | --- |
+| 私钥文件持久存在 | `$HOME/.ssh/id_ed25519_github` | 文件仍在，但 SSH 不一定会自动选择自定义路径 |
+| 客户端持续选择该文件 | `IdentityFile`、`IdentitiesOnly` | `~/.ssh/config` 仍在时继续生效，不等于 agent 已运行或口令已缓存 |
+| 解锁后的身份暂存于 agent | agent 进程、通信 socket 和已加载身份 | 只在相应 agent 生命周期内可用；是否跨终端或登录取决于系统会话怎样提供 agent |
+
+`SSH_AUTH_SOCK` 指向当前 Shell 怎样联系 agent，`ssh-add -l` 列出 agent 已加载密钥的指纹，不会显示私钥内容。
+
+#### 4.4.1 先检查当前登录会话
 
 ```bash
 printf 'SSH_AUTH_SOCK=%s\n' "${SSH_AUTH_SOCK:-未设置}"
@@ -253,13 +266,25 @@ ssh-add -l -E sha256
 - 显示没有身份（no identities）：agent 可用，但尚未加载密钥。
 - 显示无法连接 agent：当前 Shell 没有可用 agent；不要用 `2>/dev/null` 隐藏这个区别。
 
-Ubuntu 桌面、终端管理器或登录会话可能已经提供 agent。只有确认当前 Shell 没有可用 agent，且接受它仅对当前终端环境生效时，才临时启动：
+Ubuntu 桌面、终端管理器、远程登录会话或 macOS 登录会话可能已经提供 agent。只要当前 agent 可用，就复用它，不要再启动第二个进程。
+
+#### 4.4.2 当前没有 agent：只做临时恢复
+
+只有确认当前 Shell 无法连接 agent 时才进入本节。先确认当前 Shell 实际解析到哪个 `ssh-agent`：
+
+```bash
+type -a ssh-agent
+```
+
+输出可能因系统与安装方式不同。若名称被别名、函数或用途不明的程序遮蔽，先确认来源，不要直接执行其生成的代码。确认使用可信 OpenSSH `ssh-agent` 后，才临时启动：
 
 ```bash
 eval "$(ssh-agent -s)"
 ```
 
-然后加载本篇使用的同一路径并复核指纹：
+这行命令包含三个步骤：`ssh-agent -s` 启动后台 agent 并输出设置通信变量的 Shell 语句；`$()` 捕获这些输出；`eval` 再让**当前 Shell**解析并执行这些语句。命令替换与 `eval` 的区别、安全边界见 [[Shell 路径、变量、引用与展开#6.1 eval 会把文本交给当前 Shell 再解析一次|eval 的二次解析边界]]。这里只能执行已经确认来源的 `ssh-agent` 输出，不得把用户输入、网络响应或任意变量替换到 `eval` 中。
+
+Ubuntu 中可以随后加载本篇使用的同一路径并复核指纹：
 
 ```bash
 KEY_PATH="$HOME/.ssh/id_ed25519_github"
@@ -268,16 +293,85 @@ ssh-add "$KEY_PATH" &&
   ssh-add -l -E sha256
 ```
 
-macOS 应使用系统自带的 `ssh-add`。若希望将私钥口令保存到 Keychain，可在确认当前 agent 可用后执行：
+`eval` 设置的 `SSH_AUTH_SOCK` 和 `SSH_AGENT_PID` 只会由当前 Shell 及其后续子进程继承；无关的新 Shell 不会自动取得这组变量。后台 agent 也不保证在当前终端关闭时立即退出，所以这只是临时恢复，不是日常持久方案。不得把这条启动命令无条件写入 `.bashrc` 或 `.zshrc`，否则每个新 Shell 都可能启动新的 agent。
+
+如果这个 agent 确实由本节临时启动，且已经不再使用，可以停止它并清理当前 Shell 的通信变量：
+
+```bash
+ssh-agent -k &&
+  unset SSH_AUTH_SOCK SSH_AGENT_PID
+```
+
+不要用这条命令停止桌面环境、登录会话、IDE 或其他工具统一管理的 agent。
+
+#### 4.4.3 日常使用：持久选择密钥并复用会话 agent
+
+本篇使用的是自定义文件名 `id_ed25519_github`，不应依赖它碰巧仍在某个 agent 中。先只读检查已有用户级 SSH 配置：
+
+```bash
+SSH_CONFIG="$HOME/.ssh/config"
+
+if test -e "$SSH_CONFIG" || test -L "$SSH_CONFIG"; then
+  ls -l "$SSH_CONFIG"
+  sed -n '1,240p' "$SSH_CONFIG"
+else
+  printf '%s\n' '当前用户尚无 SSH 客户端配置。'
+fi
+```
+
+若文件已经存在，应先备份或记录原内容，再把对应配置合并到正确的 `Host` 块；不得覆盖用途未知的配置，也不要重复追加同名块。具体读取顺序、字段含义和“具体规则在前、通用规则在后”的边界见 [[OpenSSH 常用命令基础#2.6 使用 ~/.ssh/config 别名]]。
+
+Ubuntu 或其他不使用 macOS Keychain 的客户端，可以使用以下 GitHub 配置；其他平台应把 `Host` 改为实际 SSH 主机或已经规划好的本地别名：
+
+```sshconfig
+Host github.com
+    AddKeysToAgent yes
+    IdentityFile ~/.ssh/id_ed25519_github
+    IdentitiesOnly yes
+```
+
+- `IdentityFile` 让后续新终端和新登录仍能找到自定义路径中的私钥。
+- `IdentitiesOnly yes` 限制 SSH 使用明确配置的候选身份，避免 agent 中其他密钥干扰账号判断。
+- `AddKeysToAgent yes` 只会在 SSH 从文件成功读取密钥时，把它加入**已经运行的 agent**；它不会启动 agent，也不会把解锁后的密钥永久写入配置。
+
+保存后先解析配置，不建立网络连接：
+
+```bash
+ssh -G git@github.com |
+  grep -E '^(hostname|user|identityfile|identitiesonly|addkeystoagent) '
+```
+
+输出中应包含 `github.com`、`git`、本篇自定义私钥路径和 `identitiesonly yes`，并显示 `addkeystoagent` 已启用；不同 OpenSSH 版本可能把启用值规范化输出为 `yes` 或 `true`。若结果与预期不同，先恢复或修正刚才合并的配置，不要继续真实连接。`ssh -G` 仍会读取 `Include`，可信配置中的 `Match exec` 也可能执行本地命令。
+
+#### 4.4.4 macOS：同时使用系统 agent 与 Keychain
+
+macOS 若要在新登录后继续自动选择私钥，并由系统 Keychain 保存私钥口令，应在同一个 `Host` 块使用下面这一份配置，不要再额外保留上一节的重复块：
+
+```sshconfig
+Host github.com
+    IgnoreUnknown UseKeychain
+    AddKeysToAgent yes
+    UseKeychain yes
+    IdentityFile ~/.ssh/id_ed25519_github
+    IdentitiesOnly yes
+```
+
+`IgnoreUnknown UseKeychain` 必须出现在 `UseKeychain` 之前，便于同一份配置在不认识苹果扩展的 OpenSSH 上跳过该字段。`UseKeychain yes` 保存和读取的是私钥口令，私钥文件仍留在 `$HOME/.ssh`。确认当前 agent 可用后，使用苹果系统自带的 `ssh-add` 完成一次加载和 Keychain 保存：
 
 ```bash
 KEY_PATH="$HOME/.ssh/id_ed25519_github"
 
-ssh-add --apple-use-keychain "$KEY_PATH" &&
-  ssh-add -l -E sha256
+/usr/bin/ssh-add --apple-use-keychain "$KEY_PATH" &&
+  /usr/bin/ssh-add -l -E sha256
 ```
 
-`--apple-use-keychain` 只适用于苹果系统自带 OpenSSH，不得复制到 Ubuntu。自定义文件名、多账号或需要跨新终端自动选择密钥时，应先读取现有 `$HOME/.ssh/config`，再按 [[OpenSSH 常用命令基础#2.6 使用 ~/.ssh/config 别名]] 合并 `Host`、`IdentityFile` 和 `IdentitiesOnly` 配置；不要覆盖用途未知的现有块。保存后用 `ssh -G` 检查最终解析值。
+`--apple-use-keychain` 只适用于苹果系统自带的 `ssh-add`，不得复制到 Ubuntu。若私钥没有口令，应省略 `UseKeychain` 和 `--apple-use-keychain`；本篇仍建议为普通磁盘私钥设置强口令。
+
+#### 4.4.5 Ubuntu：持久程度取决于登录会话
+
+Ubuntu 登录会话若已经提供 agent，上一节的 `IdentityFile` 与 `AddKeysToAgent yes` 可以避免每个终端都手工执行 `ssh-add`：第一次实际使用私钥时可能需要输入一次口令，随后同一 agent 生命周期内可以复用。
+
+重新登录或重启后是否仍有 agent、是否自动解锁密钥，取决于桌面环境、终端管理器、密钥环或用户会话服务。若新登录后第 4.4.1 节仍显示无法连接 agent，先使用第 4.4.2 节临时恢复；需要跨登录管理 agent 时，应针对实际 Ubuntu 版本和会话管理器设计用户级服务，不能把某台机器的 socket 路径或启动脚本当成通用答案。本篇不展开 systemd 用户服务，也不建议通过移除私钥口令来换取便利。
 
 ### 4.5 将公钥登记到平台
 
@@ -583,6 +677,8 @@ SSH 测试显示预期账号，或 HTTPS 登录已经完成，只能证明平台
 - [ ] 已解释本地仓库、远程 URL、`origin`、网络、凭据和仓库权限的关系。
 - [ ] 已选择 HTTPS 或 SSH 中的一条路径，没有同时盲目修改两套配置。
 - [ ] HTTPS 凭据由受认可的 helper 管理，或 SSH 私钥只保留在可信客户端。
+- [ ] SSH 场景已区分私钥文件、`~/.ssh/config`、agent 进程与口令存储；自定义密钥路径已有可验证的日常选择规则。
+- [ ] 已明确 `AddKeysToAgent` 只能复用正在运行的 agent，没有把 `eval "$(ssh-agent -s)"` 无条件写入 Shell 启动文件。
 - [ ] SSH 场景已核对主机指纹、平台账号和实际使用的密钥。
 - [ ] `git remote -v` 不含令牌，`git ls-remote` 已验证目标仓库可读取。
 - [ ] 已明确：读取验证不等于拥有推送权限。
@@ -597,6 +693,8 @@ SSH 测试显示预期账号，或 HTTPS 登录已经完成，只能证明平台
 - [Git：git-clone 手册](https://git-scm.com/docs/git-clone)
 - [Git：git-remote 手册](https://git-scm.com/docs/git-remote)
 - [Git：git-ls-remote 手册](https://git-scm.com/docs/git-ls-remote)
+- [OpenBSD：`ssh-agent(1)` 手册](https://man.openbsd.org/ssh-agent.1)
+- [OpenBSD：`ssh_config(5)` 手册](https://man.openbsd.org/ssh_config.5)
 - [GitHub：远程仓库与 HTTPS/SSH URL](https://docs.github.com/en/get-started/git-basics/about-remote-repositories)
 - [GitHub：使用 SSH 连接](https://docs.github.com/en/authentication/connecting-to-github-with-ssh)
 - [GitHub：生成 SSH 密钥并加入 ssh-agent](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)

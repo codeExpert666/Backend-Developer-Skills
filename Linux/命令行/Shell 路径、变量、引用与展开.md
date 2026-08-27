@@ -11,7 +11,7 @@ tags:
   - 路径
   - 变量
 created: 2026-07-19T23:48:38
-updated: 2026-07-25T14:29:00
+updated: 2026-08-26T17:11:22
 ---
 
 本文解释 Shell 怎样把路径、变量、引号、命令替换和通配符变成最终传给命令的参数。目标是读懂常见命令并安全处理路径，不是穷举 Bash 的所有展开功能。
@@ -21,7 +21,7 @@ updated: 2026-07-25T14:29:00
 | 层级 | 内容 |
 | --- | --- |
 | 必须熟练 | 绝对与相对路径、变量赋值、`${name}`、单引号、双引号，以及路径变量默认写成 `"$path"` |
-| 理解会查 | Shell 变量与环境变量、`export`、命令替换、基础通配符和 PATH 查找 |
+| 理解会查 | Shell 变量与环境变量、`export`、命令替换、`eval` 的二次解析边界、基础通配符和 PATH 查找 |
 | 认识即可 | 完整展开顺序、花括号展开、数组、进程替换和改变默认通配行为的 Shell 选项 |
 
 本篇优先建立“展开会改变最终参数”的模型。低频展开语法在真实脚本中遇到后再查询。
@@ -214,6 +214,37 @@ printf 'kernel=%s\n' "$kernel_name"
 
 优先使用 `$()`，因为嵌套和阅读通常比旧式反引号清楚。命令替换由子 Shell 环境执行；其中对普通变量或当前目录的修改不会直接改变外层 Shell。
 
+### 6.1 `eval` 会把文本交给当前 Shell 再解析一次
+
+命令替换只取得标准输出，不会自动把输出内容当作新命令执行。`eval` 是 Shell 内建命令，它把参数组成的文本重新交给**当前 Shell**解析并执行。以下查询在 Bash 中执行；Shell 内建与帮助入口的通用说明见 [[Shell 命令结构、类型与帮助系统#Shell 内建命令]]：
+
+```bash
+type eval
+help eval
+```
+
+可以用一段不修改文件的示例观察“文本”和“代码”的区别：
+
+```bash
+shell_code='printf "home=%s\n" "$HOME"'
+
+printf '作为文本：%s\n' "$shell_code"
+eval "$shell_code"
+
+unset shell_code
+```
+
+第一次赋值使用单引号，所以 `$HOME` 先作为普通字符保存在变量中。第一条 `printf` 只显示这段文本；`eval` 会让当前 Shell 再解析一次，此时文本中的 `printf` 和 `$HOME` 才具有命令与变量展开语义。
+
+这次“再次解析”也形成了明确的安全边界：
+
+- `eval` 中的命令可以直接改变当前 Shell 的变量、目录和选项，也可以执行文件、网络或其他有副作用的操作。
+- 不要把用户输入、网络响应、未经审阅的文件内容或任意变量直接交给 `eval`。
+- 能直接调用命令时就直接调用；需要保存多个参数时优先使用数组，不要先拼成命令字符串再执行。
+- 只有可信工具明确生成了供当前 Shell 执行的代码时，才考虑 `eval`，并先确认工具的实际解析来源与输出用途。
+
+例如 `ssh-agent -s` 会生成设置 agent 通信环境变量的 Shell 语句；Git 场景中的检查、临时启动和日常配置见 [[Git 凭据、SSH 与常见问题排查#4.4 检查 SSH Agent，再选择临时恢复或日常配置]]。
+
 ## 7. 通配符由 Shell 展开文件名
 
 常见文件名模式：
@@ -359,6 +390,7 @@ fi
 - [ ] 能说明单引号、双引号和反斜杠的主要差异。
 - [ ] 路径变量默认使用 `"$variable"`，并知道引用不能替代范围验证。
 - [ ] 能解释命令替换和 `*`、`?` 的基本行为。
+- [ ] 能区分“命令替换只取得输出”和“`eval` 把文本交给当前 Shell 再解析”，并拒绝执行不可信文本。
 - [ ] 知道 PATH 影响外部命令查找，不随意把当前目录加入 PATH。
 
 ## 相关笔记
@@ -371,10 +403,11 @@ fi
 
 ## 官方参考资料
 
-以下资料于 **2026-07-19** 核对：
+以下资料于 **2026-08-26** 核对：
 
 - [GNU Bash：Shell 展开](https://www.gnu.org/software/bash/manual/html_node/Shell-Expansions.html)
 - [GNU Bash：引用](https://www.gnu.org/software/bash/manual/html_node/Quoting.html)
 - [GNU Bash：Shell 参数](https://www.gnu.org/software/bash/manual/html_node/Shell-Parameters.html)
 - [GNU Bash：环境](https://www.gnu.org/software/bash/manual/html_node/Environment.html)
 - [GNU Bash：命令查找与执行](https://www.gnu.org/software/bash/manual/html_node/Command-Search-and-Execution.html)
+- [GNU Bash：Bourne Shell 内建命令（含 `eval`）](https://www.gnu.org/software/bash/manual/html_node/Bourne-Shell-Builtins.html)
