@@ -10,7 +10,7 @@ tags:
   - Git/提交
   - Git/协作
 created: 2026-07-14T22:52:26
-updated: 2026-08-25T22:38:17
+updated: 2026-08-28T14:12:13
 ---
 
 本文在 Git 已安装的前提下，配置个人提交身份、完成第一次本地提交，并按需设置一组保守的日常默认行为。它适用于 Ubuntu 与 macOS；平台差异主要出现在安装和凭据存储，参见 [[Ubuntu 从零安装 Git]]、[[macOS 从零安装 Git]] 与 [[Git 凭据、SSH 与常见问题排查]]。
@@ -31,24 +31,45 @@ updated: 2026-08-25T22:38:17
 
 ## 1. 先理解配置范围与优先级
 
-Git 配置不只有一个文件。常见来源如下：
+Git 配置不只有一个文件。下表按 Git 的读取与覆盖顺序列出五个作用域：
 
-| 范围 | 常见位置 | 适用场景 | 典型命令 |
+| 作用域 | 常见位置 | 适用场景 | 典型命令 |
 | --- | --- | --- | --- |
 | system | Git 安装目录下的系统配置 | 管理员为整台设备设定的策略 | `git config --system ...` |
-| global | `~/.gitconfig` 或 XDG 配置目录 | 个人姓名、常用编辑器与个人别名 | `git config --global ...` |
-| local | 当前仓库的 `.git/config` | 某个仓库的工作邮箱、特定远程行为 | `git config --local ...` |
-| command | 当前命令参数 | 一次性测试，不写入配置文件 | `git -c key=value <命令>` |
+| global | `~/.gitconfig` 与 `$XDG_CONFIG_HOME/git/config` | 个人姓名、常用编辑器与个人别名 | `git config --global ...` |
+| local | 当前仓库共享的配置，通常为 `.git/config` | 某个仓库的工作邮箱、特定远程行为 | `git config --local ...` |
+| worktree | 当前工作树的 `$GIT_DIR/config.worktree`，需按仓库启用 | 同一仓库的某个工作树专用设置 | `git config --worktree ...` |
+| command | 当前 Git 进程，最常见的来源是 `-c` 参数 | 一次性测试，不写入配置文件 | `git -c key=value <命令>` |
 
-同一个键可能在多处设置。不要只执行 `git config --get <键>` 然后猜测来源；需要排查时使用：
+当 Git 找到同一个键的多个定义时，对通常只取一个最终值的配置，可以先记住下面的优先级：
 
-```bash
-git config --list --show-origin
-git config --show-origin --get-all user.name
-git config --show-origin --get-all user.email
+```text
+system → global → local → worktree → command
+低优先级                              高优先级
 ```
 
-`--show-origin` 会显示配置来自哪个文件。对受团队管理的设备，不要擅自修改 system 配置；对工作仓库，也不要为了个人便利覆盖团队明确规定的 local 配置。
+Git 会从左向右读取当前可用的配置，后读取的值通常覆盖先读取的值。例如，如果 global 中的 `user.email` 是 `personal@example.test`，当前仓库的 local 中是 `work@example.test`，那么在该仓库内执行 `git config --get user.email` 会得到 local 值。下面的 command 值又会暂时覆盖它：
+
+```bash
+git -c user.email=temporary@example.test config --get user.email
+```
+
+这条命令应输出 `temporary@example.test`，但不会把它写入任何配置文件。
+
+> [!note] worktree 是按需启用的进阶作用域
+> `git worktree` 可以让同一仓库关联多个工作目录。默认情况下，这些工作树共享 local 配置；只有仓库已设置 `extensions.worktreeConfig=true` 时，Git 才会为当前工作树读写 `$GIT_DIR/config.worktree`。未启用时，`git config --worktree ...` 与 `git config --local ...` 等效。启用该扩展还涉及旧版 Git 兼容性和既有 `core.*` 配置的迁移，不要仅为完成本文而开启。需要先理解多工作树的使用场景时，参见 [[Git 未完成开发时安全验证其他分支代码]]。
+
+上述顺序是理解单值配置的基础模型，不是所有键都简单地“后者覆盖前者”。有些键允许多个值并会累积使用，有些键只在特定作用域中才会生效；应结合该键的文档和 `--get-all` 输出判断。
+
+同一个键可能在多处设置。不要只执行 `git config --get <键>` 然后猜测来源；需要排查时同时显示作用域和具体来源：
+
+```bash
+git config --list --show-scope --show-origin
+git config --show-scope --show-origin --get-all user.name
+git config --show-scope --show-origin --get-all user.email
+```
+
+`--show-scope` 会标出 system、global、local、worktree 或 command，`--show-origin` 会继续显示具体文件或命令行来源。作用域优先级只说明 Git 技术上会采用哪个值，不代表你有权覆盖项目规则。对受团队管理的设备，不要擅自修改 system 配置；对工作仓库，也不要为了个人便利覆盖团队明确规定的 local 配置。
 
 ## 2. 首先设置提交身份
 
@@ -310,5 +331,6 @@ git config --show-origin --get-all pull.rebase
 
 - [Git：首次配置](https://git-scm.com/book/en/v2/Getting-Started-First-Time-Git-Setup)
 - [Git：git-config 手册](https://git-scm.com/docs/git-config)
+- [Git：git-worktree 手册](https://git-scm.com/docs/git-worktree)
 - [Git：gitattributes 手册](https://git-scm.com/docs/gitattributes)
 - [Git：git-pull 手册](https://git-scm.com/docs/git-pull)

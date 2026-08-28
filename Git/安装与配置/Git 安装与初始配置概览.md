@@ -9,7 +9,7 @@ tags:
   - Git/安装
   - Git/配置
 created: 2026-07-14T22:52:26
-updated: 2026-07-14T22:52:26
+updated: 2026-08-28T14:12:13
 ---
 
 本文是 Linux（以 Ubuntu 为例）与 macOS 上从零使用 Git 的入口。目标不是只让 \`git --version\` 输出一个版本号，而是建立一套可确认来源、可解释配置、可安全连接远程仓库的个人 Git 环境。
@@ -54,16 +54,17 @@ Git 本身可以完全离线地创建仓库、提交和查看历史；连接 Git
 
 ## Git 配置的作用域
 
-Git 会从多个位置读取配置。通常将长期、个人偏好放在 global，将某一仓库的例外放在 local；不要为了临时试验而修改系统级配置。
+Git 会从多个作用域读取配置。下表按从低到高的常用优先级排列；通常将长期、个人偏好放在 global，将某一仓库的例外放在 local，不要为了临时试验而修改系统级配置。
 
 | 作用域 | 常见位置 | 适合放什么 | 设置方式 |
 | --- | --- | --- | --- |
-| system | 系统安装目录下的 \`gitconfig\` | 设备管理员统一制定的策略 | \`git config --system ...\` |
-| global | \`~/.gitconfig\` 或 XDG 配置目录 | 个人姓名、邮箱、编辑器、常用别名 | \`git config --global ...\` |
-| local | 当前仓库的 \`.git/config\` | 工作邮箱、仓库专用工具或团队例外 | \`git config --local ...\` |
-| command | 本次命令的 \`-c\` 参数 | 一次性试验或自动化脚本 | \`git -c key=value <命令>\` |
+| system | 系统安装目录下的 `gitconfig` | 设备管理员统一制定的策略 | `git config --system ...` |
+| global | `~/.gitconfig` 与 `$XDG_CONFIG_HOME/git/config` | 个人姓名、邮箱、编辑器、常用别名 | `git config --global ...` |
+| local | 当前仓库共享的配置，通常为 `.git/config` | 工作邮箱、仓库专用工具或团队例外 | `git config --local ...` |
+| worktree | 当前工作树的 `$GIT_DIR/config.worktree`，需按仓库启用 | 某个工作树专用的设置 | `git config --worktree ...` |
+| command | 当前 Git 进程，最常见的来源是 `-c` 参数 | 一次性试验或自动化脚本 | `git -c key=value <命令>` |
 
-当同一个键在多处出现时，范围更具体的设置可能覆盖较宽范围的设置。不要靠猜测判断最终值；使用 \`git config --show-origin --get-all <键名>\` 查看值和来源。配置作用域的完整说明见 [Git 官方 git-config 手册](https://git-scm.com/docs/git-config)。
+对通常只取一个最终值的配置，后读取的作用域优先级更高；多值配置和 worktree 的启用条件不能只靠这条顺序推断。完整的覆盖规则、排查命令与边界见 [[Git 常用配置与本地验证#1. 先理解配置范围与优先级|配置范围与优先级]]，官方定义见 [Git 官方 git-config 手册](https://git-scm.com/docs/git-config)。
 
 > [!warning] 不要用 \`sudo git ...\` 解决权限或认证问题
 > \`sudo\` 会改用 root 的 HOME、Git 配置和 SSH 密钥，容易产生 root 所有的文件，也会让“我明明设置了密钥却无法推送”变得难以定位。仓库内文件所有权异常时，应先修复目录权限或询问设备管理员，而不是把日常 Git 操作升级为 root。
