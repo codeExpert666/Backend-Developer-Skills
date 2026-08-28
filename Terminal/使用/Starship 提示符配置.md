@@ -11,10 +11,10 @@ tags:
   - Starship
   - Zsh
 created: 2026-07-19T16:35:26
-updated: 2026-07-19T16:53:12
+updated: 2026-08-28T16:35:10
 ---
 
-Starship 是独立的跨 Shell 提示符程序，只负责根据当前目录、Git 仓库和项目文件渲染 prompt。它不提供 Zsh 插件管理、命令历史、目录数据库、模糊查找或终端主题；这些职责分别属于 Antidote、Atuin、zoxide、fzf 和 Ghostty。完整分层见 [[现代终端环境搭建概览]]。
+Starship 是独立的跨 Shell 提示符程序，只负责根据当前目录、Git 仓库和项目文件渲染 prompt。它不提供 Zsh 插件管理、命令历史、目录数据库、模糊查找或终端主题；这些职责分别属于 Antidote、Atuin、zoxide、fzf 和 Ghostty。完整分层见 [[现代终端环境搭建概览]]，配置源与默认路径的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
 
 ## 1. 安装 Starship
 
@@ -76,18 +76,22 @@ Starship 默认读取：
 ~/.config/starship.toml
 ~~~
 
-创建文件：
+主路线不直接创建目标文件，而是在 dotfiles 的 `starship` package 中建立配置源，同时确保目标父目录是真实目录：
 
 ~~~bash
-mkdir -p "$HOME/.config"
-touch "$HOME/.config/starship.toml"
+DOTFILES_DIR="$HOME/.dotfiles"
+starship_source="$DOTFILES_DIR/starship/.config/starship.toml"
+
+git -C "$DOTFILES_DIR" status --short --branch
+mkdir -p "${starship_source%/*}" "$HOME/.config"
+touch "$starship_source"
 ~~~
 
 除非现有 dotfiles 布局无法调整，否则不要额外设置 `STARSHIP_CONFIG`。统一默认路径能减少 macOS、Ubuntu、本地终端和 SSH 会话之间的差异。
 
 ## 4. 最小后端开发配置
 
-下面配置只展示身份、目录、Git、Java、Go、Docker 上下文和耗时命令。Kubernetes 默认关闭，避免在普通目录持续显示集群信息；需要时再显式启用。符号使用普通文本，不依赖 Nerd Font：
+下面配置保存到 `$DOTFILES_DIR/starship/.config/starship.toml`，部署后的运行时目标仍是 `~/.config/starship.toml`。它只展示身份、目录、Git、Java、Go、Docker 上下文和耗时命令。Kubernetes 默认关闭，避免在普通目录持续显示集群信息；需要时再显式启用。符号使用普通文本，不依赖 Nerd Font：
 
 ~~~toml
 # ~/.config/starship.toml
@@ -158,6 +162,24 @@ success_symbol = "[>](bold green)"
 error_symbol = "[>](bold red)"
 ~~~
 
+保存后先模拟再部署；已有目标发生冲突时，按 dotfiles 专题备份和比较，不直接覆盖：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --simulate --restow --verbose=2 starship
+~~~
+
+确认模拟输出没有 conflict 且只涉及 Starship 配置后，再实际部署：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --restow --verbose=2 starship
+~~~
+
 这套配置有三个刻意的取舍：
 
 1. SSH 会话显示用户名和主机名，降低在错误服务器执行命令的风险；本地普通用户不重复显示身份。
@@ -210,7 +232,7 @@ zsh -n "$HOME/.config/zsh/.zshrc"
 exec zsh -l
 ~~~
 
-分别进入普通目录、Git 仓库、Java 项目和 Go 项目验证模块按需出现；SSH 到测试主机时确认用户名与主机名可见。若出现 TOML 解析错误，先回退到空 `starship.toml`，再逐段恢复；不要同时修改 Ghostty 主题和 Starship 配置。
+分别进入普通目录、Git 仓库、Java 项目和 Go 项目验证模块按需出现；SSH 到测试主机时确认用户名与主机名可见。再确认 `~/.config/starship.toml` 是指向预期 dotfiles 仓库的链接，并审查对应 Git diff。若出现 TOML 解析错误，先把仓库源回退到已知良好内容，再逐段恢复；不要同时修改 Ghostty 主题和 Starship 配置。
 
 Starship 的日志默认位于缓存目录，不进入 Git。更新、基准测试和回退流程见 [[现代终端环境更新、验证与回退]]。
 
@@ -219,3 +241,4 @@ Starship 的日志默认位于缓存目录，不进入 Git。更新、基准测�
 - [Starship：安装与 Zsh 初始化](https://starship.rs/guide/)
 - [Starship：配置文件与全局选项](https://starship.rs/config/)
 - [Starship：性能诊断与字体排障](https://starship.rs/faq/)
+- [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)

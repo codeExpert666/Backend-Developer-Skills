@@ -12,12 +12,12 @@ tags:
   - Atuin
   - 命令历史
 created: 2026-07-19T16:33:48
-updated: 2026-07-19T17:05:02
+updated: 2026-08-28T16:35:10
 ---
 
 Atuin 将命令、执行时间、工作目录、退出状态和耗时保存在本地数据库中，并提供比普通 Shell 历史更容易检索的界面。本方案把它作为 **local-first 的命令历史工具**：不注册账号也能完整使用，跨机器同步是后续按需启用的可选能力。
 
-本文默认已经按照 [[现代终端环境搭建概览]] 配置 Zsh。插件加载和跨机器文件边界见 [[Zsh 与 Antidote 跨机器配置管理]]，与 fzf 的按键分工见 [[zoxide 与 fzf 导航和模糊查找]]，升级和数据恢复见 [[现代终端环境更新、验证与回退]]。
+本文默认已经按照 [[现代终端环境搭建概览]] 配置 Zsh。Atuin 配置源与本地数据的部署边界见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]，插件加载和跨机器文件边界见 [[Zsh 与 Antidote 跨机器配置管理]]，与 fzf 的按键分工见 [[zoxide 与 fzf 导航和模糊查找]]，升级和数据恢复见 [[现代终端环境更新、验证与回退]]。
 
 ## 1. 先明确职责边界
 
@@ -119,13 +119,18 @@ unset legacy_history_file
 
 ## 5. 使用一套克制的本地配置
 
-Atuin 的主配置通常位于 `~/.config/atuin/config.toml`。先创建目录：
+Atuin 的运行时主配置通常位于 `~/.config/atuin/config.toml`。主路线在 dotfiles 的 `atuin` package 中创建配置源，并让 GNU Stow 部署到这个默认路径：
 
 ~~~bash
-mkdir -p "$HOME/.config/atuin"
+DOTFILES_DIR="$HOME/.dotfiles"
+atuin_source="$DOTFILES_DIR/atuin/.config/atuin/config.toml"
+
+git -C "$DOTFILES_DIR" status --short --branch
+mkdir -p "${atuin_source%/*}" "$HOME/.config/atuin"
+touch "$atuin_source"
 ~~~
 
-可从下面的最小配置开始：
+将下面的最小配置保存到 `$DOTFILES_DIR/atuin/.config/atuin/config.toml`：
 
 ~~~toml
 # 默认只使用本地数据库；决定启用同步后再改为 true。
@@ -150,6 +155,24 @@ history_filter = [
 
 # 如需排除整个目录，取消注释并替换成真实的绝对路径。
 # cwd_filter = ["^/absolute/path/to/private-workspace"]
+~~~
+
+保存后先模拟再部署。已有 `~/.config/atuin/config.toml` 时先备份、比较并检查其中是否含真实私有路径；不要直接覆盖：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --simulate --restow --verbose=2 atuin
+~~~
+
+确认模拟输出没有 conflict 且只涉及 Atuin 配置后，再实际部署：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --restow --verbose=2 atuin
 ~~~
 
 `history_filter` 和 `cwd_filter` 是正则表达式，默认可在字符串任意位置匹配；需要匹配命令开头或结尾时，应显式使用 `^` 或 `$`。不要直接复制过于宽泛的规则，否则正常历史也会被排除。
@@ -227,13 +250,13 @@ bindkey '^R'
 
 | 内容 | 是否进入 Git | 原因 |
 | --- | --- | --- |
-| 审查后的 `~/.config/atuin/config.toml` | 可以 | 只保存通用偏好和过滤规则 |
+| `$DOTFILES_DIR/atuin/.config/atuin/config.toml` | 可以 | 由 Stow 部署到默认路径，只保存通用偏好和过滤规则 |
 | Atuin 历史数据库 | 不可以 | 包含实际命令、目录和执行元数据 |
 | Atuin 加密密钥 | 不可以 | 是解密同步历史的安全边界 |
 | Atuin session 文件 | 不可以 | 本质上是服务端会话令牌 |
 | Atuin 日志和缓存 | 不可以 | 属于运行时数据，且可能含本机信息 |
 
-Atuin 默认把数据库、密钥和 session 放在 `~/.local/share/atuin`，除非使用 XDG 环境变量或配置覆盖。该目录可以进入受保护的私有备份，但绝不能提交到 dotfiles 仓库。
+Atuin 默认把数据库、密钥和 session 放在 `~/.local/share/atuin`，除非使用 XDG 环境变量或配置覆盖。该目录可以进入受保护的私有备份，但绝不能提交到 dotfiles 仓库。最后确认运行时 `config.toml` 是指向预期仓库的链接，Atuin 自检通过，并且 Git diff 只包含经过审查的通用配置。
 
 ## 官方参考资料
 
@@ -245,3 +268,4 @@ Atuin 默认把数据库、密钥和 session 放在 `~/.local/share/atuin`，除
 - [Atuin：配置、过滤与数据路径](https://docs.atuin.sh/cli/configuration/config/)
 - [Atuin：可选同步与密钥边界](https://docs.atuin.sh/cli/guide/sync/)
 - [Atuin：doctor 命令](https://docs.atuin.sh/cli/reference/doctor/)
+- [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)

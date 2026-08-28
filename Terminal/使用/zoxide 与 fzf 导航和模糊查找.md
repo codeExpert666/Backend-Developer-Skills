@@ -13,12 +13,12 @@ tags:
   - fzf
   - 命令行效率
 created: 2026-07-19T16:33:48
-updated: 2026-07-19T16:33:48
+updated: 2026-08-28T16:35:10
 ---
 
 zoxide 与 fzf 都能减少路径输入，但解决的问题不同：zoxide 根据使用频率记住目录，fzf 从候选文本中进行模糊选择。本方案让 zoxide 负责目录跳转、fzf 负责文件选择，并把历史搜索明确交给 [[Atuin 命令历史管理]]。
 
-安装全套环境见 [[现代终端环境搭建概览]]，Zsh 与 Antidote 的配置边界见 [[Zsh 与 Antidote 跨机器配置管理]]，更新和回退见 [[现代终端环境更新、验证与回退]]。
+安装全套环境见 [[现代终端环境搭建概览]]，dotfiles 源与运行时配置的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]，Zsh 与 Antidote 的配置边界见 [[Zsh 与 Antidote 跨机器配置管理]]，更新和回退见 [[现代终端环境更新、验证与回退]]。
 
 ## 1. 先固定职责和按键
 
@@ -72,7 +72,7 @@ zoxide 当前要求用于交互选择的 fzf 至少为 `0.51.0`。Ubuntu 仓库�
 
 ## 3. 使用唯一的初始化顺序
 
-以下片段应位于 `.zshrc` 的交互式工具区，并满足两个前提：
+以下片段应写入 dotfiles 源 `$DOTFILES_DIR/zsh/.config/zsh/.zshrc` 的交互式工具区；Stow 部署后，Zsh 从运行时目标 `$ZDOTDIR/.zshrc` 读取同一内容。修改已经部署的目标链接也会修改仓库源。它还必须满足两个前提：
 
 1. 补全系统已经由基础配置完成 `compinit`，不要在这里重复执行。
 2. Antidote 已加载普通插件，但最终的语法高亮仍留在所有 ZLE 工具之后加载。
@@ -210,7 +210,7 @@ zsh -ic 'whence -w z zi; bindkey "^T"; bindkey "^R"'
 | `Ctrl-R` 打开 fzf | fzf 加载时是否已将 `FZF_CTRL_R_COMMAND` 设为空，Atuin 是否随后初始化 |
 | 语法高亮异常 | 高亮插件是否在 fzf、Atuin、zoxide 和 Starship 之后最后加载 |
 
-zoxide 的目录评分数据库属于本机运行数据，不应提交到 Git；fzf 本身不维护需要同步的历史数据库。应进入 dotfiles 的只是上述环境变量和初始化逻辑。
+zoxide 的目录评分数据库属于本机运行数据，不应提交到 Git；fzf 本身不维护需要同步的历史数据库。应进入 dotfiles 的只是 `zsh` package 中的上述环境变量和初始化逻辑，不需要为 zoxide 或 fzf 再创建独立 package。验证完成后审查该 `.zshrc` 的 Git diff；若只修改文件内容，现有 Stow 链接无需重新部署。
 
 ## 官方参考资料
 

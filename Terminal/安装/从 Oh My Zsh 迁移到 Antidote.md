@@ -12,17 +12,17 @@ tags:
   - Oh-My-Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-07-25T14:29:00
+updated: 2026-08-28T16:35:10
 ---
 
-本文把现有 Oh My Zsh 环境迁移为 Ghostty + Zsh + Antidote + Starship + Atuin + zoxide + fzf。迁移的重点不是删除 Oh My Zsh，而是先盘点现有能力，在新的 `~/.config/zsh` 中并行重建，显式测试后再切换 `ZDOTDIR`；旧 `~/.zshrc` 与 `~/.oh-my-zsh` 会保留到观察期结束。
+本文把现有 Oh My Zsh 环境迁移为 Ghostty + Zsh + Antidote + Starship + Atuin + zoxide + fzf。迁移的重点不是删除 Oh My Zsh，而是先盘点现有能力，在普通 Git dotfiles 仓库的 `zsh` package 中并行重建，由 GNU Stow 部署并显式测试后再切换 `ZDOTDIR`；旧 `~/.zshrc` 与 `~/.oh-my-zsh` 会保留到观察期结束。
 
-新环境的分层与文件边界见 [[现代终端环境搭建概览]]。平台安装命令分别见 [[macOS 从零搭建现代终端环境]] 和 [[Ubuntu 从零搭建现代终端环境]]；迁移完成后的维护见 [[现代终端环境更新、验证与回退]]。
+新环境的分层与文件边界见 [[现代终端环境搭建概览]]，仓库初始化、Stow 冲突和解除部署见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。平台安装命令分别见 [[macOS 从零搭建现代终端环境]] 和 [[Ubuntu 从零搭建现代终端环境]]；迁移完成后的维护见 [[现代终端环境更新、验证与回退]]。
 
 ## 迁移原则
 
 1. 先记录主题、插件、别名、函数、PATH 和自定义目录，再决定每项去向。
-2. 在 `~/.config/zsh` 准备新配置，不覆盖仍在工作的 `~/.zshrc`。
+2. 在 dotfiles 的 `zsh` package 准备新配置，通过 Stow 链接到 `~/.config/zsh`，不覆盖仍在工作的 `~/.zshrc`。
 3. Oh My Zsh 主题由 Starship 替代，历史搜索由 Atuin 负责，目录跳转由 zoxide 负责。
 4. 只有确实依赖的 Oh My Zsh 子插件才通过 Antidote 选择性加载，不再启动整个框架。
 5. Antidote 只管理 Zsh 插件；Ghostty、Starship、Atuin、zoxide 和 fzf 仍由平台包管理器或官方安装器管理。
@@ -136,20 +136,27 @@ done
 
 此时旧 Oh My Zsh 仍是当前会话的启动框架。不要把 Antidote 再 `source` 到旧 `~/.zshrc`，否则会形成两个插件管理体系同时工作。
 
-## 5. 在新目录准备配置
+## 5. 在 dotfiles 源目录准备配置
 
-创建新目录和文件：
+先按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]] 初始化仓库，并确认当前 Git 现场：
 
 ~~~bash
-mkdir -p "$HOME/.config/zsh"
-touch "$HOME/.config/zsh/.zprofile"
-touch "$HOME/.config/zsh/.zshrc"
-touch "$HOME/.config/zsh/.zsh_plugins.txt"
-touch "$HOME/.config/zsh/common.zsh"
-touch "$HOME/.config/zsh/macos.zsh"
-touch "$HOME/.config/zsh/linux.zsh"
-touch "$HOME/.config/zsh/local.zprofile"
-touch "$HOME/.config/zsh/local.zsh"
+DOTFILES_DIR="$HOME/.dotfiles"
+
+git -C "$DOTFILES_DIR" status --short --branch
+git -C "$DOTFILES_DIR" rev-parse --show-toplevel
+~~~
+
+在 `zsh` package 中创建新配置源，但暂时不要创建 `.zshenv`。这样可以先把 `~/.config/zsh` 链接和测试好，而仍在工作的根目录 `~/.zshrc` 继续启动 Oh My Zsh：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+zsh_source_dir="$DOTFILES_DIR/zsh/.config/zsh"
+
+mkdir -p "$zsh_source_dir" "$HOME/.config/zsh"
+touch "$zsh_source_dir/.zprofile"
+touch "$zsh_source_dir/.zshrc"
+touch "$zsh_source_dir/.zsh_plugins.txt"
 ~~~
 
 从对应平台笔记复制当前完整的 `.zprofile` 与 `.zshrc` 骨架。迁移旧配置时遵循：
@@ -159,6 +166,36 @@ touch "$HOME/.config/zsh/local.zsh"
 - 当前机器的代理和私有 SDK 路径进入 `local.zprofile` 或 `local.zsh`；
 - 非交互 SSH 命令也必须看到的最小 PATH，留待切换时合并进 `~/.zshenv`；
 - 不复制 `ZSH`、`ZSH_THEME`、`plugins=(...)` 或 Oh My Zsh 的 source 行。
+
+只有真正迁入第一项跨平台或平台专属设置时，才创建 `common.zsh`、`macos.zsh` 或 `linux.zsh`；缺失的可选文件会被 `.zshrc` 中的可读性判断安全跳过。
+
+机器私有内容不写进仓库源。预建目标目录中的真实 local 文件，并收紧新文件权限：
+
+~~~bash
+umask 077
+[ -e "$HOME/.config/zsh/local.zprofile" ] || : > "$HOME/.config/zsh/local.zprofile"
+[ -e "$HOME/.config/zsh/local.zsh" ] || : > "$HOME/.config/zsh/local.zsh"
+~~~
+
+把已经审查的机器私有配置写入这两个目标文件。然后先模拟、再部署当前还不含 `.zshenv` 的 `zsh` package：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --simulate --verbose=2 zsh
+~~~
+
+确认模拟输出只涉及预期路径且没有 conflict 后，再部署同一个 package：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --verbose=2 zsh
+~~~
+
+已有 `~/.config/zsh` 内容发生 conflict 时，按 dotfiles 专题逐文件备份和比较；不要用 `--adopt` 把未知目标直接移动进仓库。
 
 ## 6. 选择插件清单
 
@@ -221,7 +258,7 @@ fi
 
 ## 7. 不切换 `~/.zshenv`，先并行测试
 
-先解析新文件：
+先解析已经由 Stow 部署的新文件：
 
 ~~~bash
 zsh -n "$HOME/.config/zsh/.zprofile"
@@ -254,9 +291,9 @@ env ZDOTDIR="$HOME/.config/zsh" zsh -lic '
 
 在这个阶段逐项补齐旧配置遗漏。不要用 `source ~/.zshrc` 测试，因为那仍指向旧文件，也会把两个框架混进同一个 Shell 进程。
 
-## 8. 切换最小 `~/.zshenv`
+## 8. 通过 Stow 切换最小 `~/.zshenv`
 
-只有并行测试通过后，才把以下两类内容合并进主目录的 `~/.zshenv`：
+只有并行测试通过后，才把以下两类内容写入 dotfiles 源文件 `$DOTFILES_DIR/zsh/.zshenv`：
 
 1. `ZDOTDIR` 引导；
 2. 对 SSH 非交互命令不可缺少、且经过存在性判断的最小 PATH。
@@ -269,7 +306,44 @@ export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
 
 完整的 macOS 或 Ubuntu PATH 写法应从相应平台笔记复制。不要把旧 `~/.zshrc` 中的主题、插件、别名、SDK 初始化和输出语句全部搬进 `.zshenv`。
 
-写入后，当前 Oh My Zsh 会话不会被立即替换。保留它，另开一个全新终端或新的 SSH 连接进行验证。
+先检查源文件；然后将当前根目录 `.zshenv` 移到第 2 节的迁移备份中，为 Stow 链接让出目标。下面的 `backup_dir` 必须替换为第 2 节实际输出：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+backup_dir="$HOME/.terminal-backups/omz-migration-YYYYMMDD-HHMMSS"
+
+[ -d "$backup_dir" ] || {
+  printf '停止：备份目录不存在：%s\n' "$backup_dir" >&2
+  exit 1
+}
+
+zsh -n "$DOTFILES_DIR/zsh/.zshenv"
+
+if [ -e "$HOME/.zshenv" ] && [ ! -L "$HOME/.zshenv" ]; then
+  mv "$HOME/.zshenv" "$backup_dir/active-zshenv-before-stow"
+fi
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --simulate --restow --verbose=2 zsh
+~~~
+
+若模拟报告其他冲突，应先恢复刚移动的 `.zshenv`，再按 dotfiles 专题处理；不能在状态不清楚时继续应用。只有模拟输出符合预期，才实际重新部署并检查链接：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --restow --verbose=2 zsh
+
+for managed_path in "$HOME/.zshenv" "$HOME/.config/zsh/.zprofile" "$HOME/.config/zsh/.zshrc"; do
+  [ -L "$managed_path" ] || {
+    printf 'expected managed link: %s\n' "$managed_path" >&2
+    exit 1
+  }
+done
+~~~
+
+链接生效后，当前 Oh My Zsh 会话不会被立即替换。保留它，另开一个全新终端或新的 SSH 连接进行验证。
 
 ## 9. 验证切换结果
 
@@ -339,23 +413,60 @@ zoxide import z
 
 ## 11. 保存已验证状态
 
-基础体验稳定后，可让 Antidote 保存一份固定到提交的 snapshot：
+基础体验稳定后，若仓库还没有部署脚本，先按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#8. 固化可重复的部署和验证入口|dotfiles 部署与验证入口]] 保存并验证脚本。然后让 Antidote 把固定到提交的 snapshot 直接保存到 dotfiles 源目录，再重新部署新增文件：
 
 ~~~zsh
-mkdir -p "$ZDOTDIR/snapshots"
-antidote snapshot save "$ZDOTDIR/snapshots/antidote.txt"
+DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+snapshot_source="$DOTFILES_DIR/zsh/.config/zsh/snapshots/antidote.txt"
+
+mkdir -p "${snapshot_source:h}"
+antidote snapshot save "$snapshot_source"
+"$DOTFILES_DIR/scripts/deploy" --simulate zsh
 ~~~
 
-配置仓库可同时跟踪 `.zsh_plugins.txt` 和该 snapshot：前者描述“加载什么和如何加载”，后者记录“当时验证的是哪些提交”。Antidote 安装目录、插件缓存和生成的 `.zsh_plugins.zsh` 不跟踪。
+确认模拟输出只新增预期 snapshot 链接后，再应用：
+
+~~~zsh
+DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+
+"$DOTFILES_DIR/scripts/deploy" --apply zsh
+~~~
+
+配置仓库可同时跟踪 `.zsh_plugins.txt` 和该 snapshot：前者描述“加载什么和如何加载”，后者记录“当时验证的是哪些提交”。Antidote 安装目录、插件缓存和生成的 `.zsh_plugins.zsh` 不跟踪。完成新会话验证后，按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#9. 首次提交与可选远端|首次提交流程]]审查并提交已知良好状态。
 
 ## 12. 回退到原 Oh My Zsh
 
-若新会话出现问题，从一直保留的旧会话执行。先把本节的示例路径换成第 2 步真实的 `backup_dir`：
+若新会话出现问题，从一直保留的旧会话执行。先模拟解除 `zsh` package；确认只删除该 package 拥有的链接后再实际解除。仓库源文件和目标目录中的 local 文件都会保留：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --simulate --delete --verbose=2 zsh
+~~~
+
+确认输出只删除 `zsh` package 拥有的链接后，再实际解除：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --delete --verbose=2 zsh
+~~~
+
+只有链接解除后，才把根目录启动文件恢复为普通文件。把下面的示例路径换成第 2 步真实的 `backup_dir`：
 
 ~~~bash
 backup_dir="$HOME/.terminal-backups/omz-migration-YYYYMMDD-HHMMSS"
 
-if [ -f "$backup_dir/.zshenv" ]; then
+[ -d "$backup_dir" ] || {
+  printf '停止：备份目录不存在：%s\n' "$backup_dir" >&2
+  exit 1
+}
+
+if [ -f "$backup_dir/active-zshenv-before-stow" ]; then
+  cp -p "$backup_dir/active-zshenv-before-stow" "$HOME/.zshenv"
+elif [ -f "$backup_dir/.zshenv" ]; then
   cp -p "$backup_dir/.zshenv" "$HOME/.zshenv"
 elif [ -f "$backup_dir/no-original-zshenv" ] && [ -f "$HOME/.zshenv" ]; then
   mv "$HOME/.zshenv" "$HOME/.zshenv.antidote-disabled.$(date +%Y%m%d-%H%M%S)"
@@ -371,7 +482,7 @@ fi
 exec env -u ZDOTDIR zsh -l
 ~~~
 
-该回退不删除 `~/.config/zsh`，因此修正后仍可重复第 7 步并行测试。若新 `.zshrc` 错误导致交互启动异常，也可从备用会话运行 `zsh -f`，跳过交互配置后再修复文件。
+该回退不删除 dotfiles 仓库、`~/.config/zsh` 中的真实目录或 local 文件，因此修正后仍可重新部署并重复第 7 步并行测试。若新 `.zshrc` 错误导致交互启动异常，也可从备用会话运行 `zsh -f`，跳过交互配置后再修复文件。
 
 ## 13. 何时清理 Oh My Zsh
 
@@ -397,3 +508,4 @@ exec env -u ZDOTDIR zsh -l
 - [Atuin：按键配置](https://docs.atuin.sh/cli/configuration/key-binding/)
 - [zoxide：导入旧目录数据](https://github.com/ajeetdsouza/zoxide)
 - [fzf：Shell integration 与按键禁用](https://github.com/junegunn/fzf)
+- [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)

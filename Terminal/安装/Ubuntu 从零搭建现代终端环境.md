@@ -12,12 +12,12 @@ tags:
   - Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-07-25T14:29:00
+updated: 2026-08-28T16:35:10
 ---
 
-本文在 Ubuntu 上搭建 Zsh + Antidote + Starship + Atuin + zoxide + fzf，并说明 Ubuntu Desktop 与远程 Ubuntu Server 对 Ghostty 的不同处理。配置目录和加载顺序与 [[macOS 从零搭建现代终端环境]] 保持一致，便于跨机器维护。
+本文在 Ubuntu 上搭建 Zsh + Antidote + Starship + Atuin + zoxide + fzf，并说明 Ubuntu Desktop 与远程 Ubuntu Server 对 Ghostty 的不同处理。可复用配置进入普通 Git dotfiles 仓库，由 GNU Stow 部署到 `$HOME`；配置目录和加载顺序与 [[macOS 从零搭建现代终端环境]] 保持一致，便于跨机器维护和恢复。
 
-请先阅读 [[现代终端环境搭建概览]]。已有 Oh My Zsh 的机器应改走 [[从 Oh My Zsh 迁移到 Antidote]]；生产服务器、共享跳板机和受管主机还应先确认软件安装与登录 Shell 变更策略。
+请先阅读 [[现代终端环境搭建概览]] 和 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。已有 Oh My Zsh 的机器应改走 [[从 Oh My Zsh 迁移到 Antidote]]；生产服务器、共享跳板机和受管主机还应先确认软件安装、个人 dotfiles 和登录 Shell 变更策略。
 
 ## Desktop 与 Server 的边界
 
@@ -81,11 +81,11 @@ printf 'backup created: %s\n' "$backup_dir"
 
 ## 3. 安装系统基础依赖
 
-通过 apt 安装 Zsh、Git、curl、证书和后文审阅安装脚本所需的 `less`：
+通过 APT 安装 Zsh、Git、GNU Stow、curl、证书和后文审阅安装脚本所需的 `less`：
 
 ~~~bash
 sudo apt update
-sudo apt install -y zsh git curl ca-certificates less
+sudo apt install -y zsh git stow curl ca-certificates less
 ~~~
 
 确认路径和版本：
@@ -94,6 +94,7 @@ sudo apt install -y zsh git curl ca-certificates less
 command -v zsh
 zsh --version
 git --version
+stow --version
 curl --version
 ~~~
 
@@ -205,25 +206,35 @@ Ubuntu Desktop 用户可以使用 Ghostty，但应先理解包来源：Ghostty �
 
 本文不固定抄写社区 Ubuntu 安装脚本，因为它不是 Ghostty 官方构建产物，维护方式也可能变化。Ubuntu Server 直接跳过本节。
 
-## 7. 建立 ZDOTDIR 配置目录
+## 7. 建立 dotfiles 源目录与 ZDOTDIR 目标目录
 
-创建配置文件但不覆盖现有内容：
+先按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]] 初始化普通 Git 仓库。本文用 `$HOME/.dotfiles` 作为示例；若选择了其他位置，只修改 `DOTFILES_DIR`。先确认它确实是预期仓库：
 
 ~~~bash
-mkdir -p "$HOME/.config/zsh" "$HOME/.config/atuin"
-touch "$HOME/.config/zsh/.zprofile"
-touch "$HOME/.config/zsh/.zshrc"
-touch "$HOME/.config/zsh/.zsh_plugins.txt"
-touch "$HOME/.config/zsh/common.zsh"
-touch "$HOME/.config/zsh/macos.zsh"
-touch "$HOME/.config/zsh/linux.zsh"
-touch "$HOME/.config/zsh/local.zprofile"
-touch "$HOME/.config/zsh/local.zsh"
+DOTFILES_DIR="$HOME/.dotfiles"
+
+git -C "$DOTFILES_DIR" status --short --branch
+git -C "$DOTFILES_DIR" rev-parse --show-toplevel
 ~~~
+
+然后在 `zsh` package 中创建配置源，并预建用于容纳符号链接和本机覆盖的真实目标目录：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+zsh_source_dir="$DOTFILES_DIR/zsh/.config/zsh"
+
+mkdir -p "$zsh_source_dir" "$HOME/.config/zsh"
+touch "$DOTFILES_DIR/zsh/.zshenv"
+touch "$zsh_source_dir/.zprofile"
+touch "$zsh_source_dir/.zshrc"
+touch "$zsh_source_dir/.zsh_plugins.txt"
+~~~
+
+这里不创建仓库中的 `local.zprofile` 或 `local.zsh`。它们是部署后位于 `$HOME/.config/zsh` 的本机真实文件，不能成为符号链接源。
 
 ### 配置 `~/.zshenv`
 
-将下列内容合并到 `~/.zshenv`：
+将下列内容保存到 `$DOTFILES_DIR/zsh/.zshenv`。若 `~/.zshenv` 原本存在，先按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#7. 安全接管已经存在的配置|安全接管已有配置]] 对照备份、选择内容并处理 Stow 冲突：
 
 ~~~zsh
 export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
@@ -242,7 +253,7 @@ export PATH
 
 ### 配置 `.zprofile`
 
-将下列跨平台内容保存为 `~/.config/zsh/.zprofile`：
+将下列跨平台内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zprofile`；Stow 部署后的运行时目标才是 `~/.config/zsh/.zprofile`：
 
 ~~~zsh
 # macOS 登录 Shell 会执行；Ubuntu 上因文件不存在而自然跳过。
@@ -257,14 +268,14 @@ fi
 
 ## 8. 声明插件与 `.zshrc`
 
-将下列内容保存为 `~/.config/zsh/.zsh_plugins.txt`：
+将下列内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zsh_plugins.txt`：
 
 ~~~text
 zsh-users/zsh-autosuggestions
 zsh-users/zsh-syntax-highlighting kind:clone
 ~~~
 
-再将下列骨架保存为 `~/.config/zsh/.zshrc`：
+再将下列骨架保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zshrc`；代码注释仍使用运行时目标路径，便于理解 Zsh 实际读取什么：
 
 ~~~zsh
 # 使用 XDG state 保存原生 Zsh 历史，作为 Atuin 之外的本地回退。
@@ -331,28 +342,68 @@ if (( $+functions[antidote] )); then
 fi
 ~~~
 
-`common.zsh` 放跨平台别名与函数，`linux.zsh` 放 Ubuntu 专属配置，`local.zsh` 放当前机器的代理或私有路径。先让这些文件为空，不影响基础功能。
+需要第一条跨平台别名或函数时，再在仓库源树创建 `common.zsh`；出现第一项 Ubuntu 专属设置时再创建 `linux.zsh`。缺少这两个可选文件时，前面的可读性判断会自然跳过。`local.zsh` 放当前机器的代理或私有路径，并在 Stow 部署后作为目标目录中的真实文件创建。不要为了目录看起来完整而创建空配置。
 
 ## 9. 切换登录 Shell 前先测试
 
-先解析配置：
+先解析仓库源配置：
 
 ~~~bash
-zsh -n "$HOME/.zshenv"
-zsh -n "$HOME/.config/zsh/.zprofile"
-zsh -n "$HOME/.config/zsh/.zshrc"
+DOTFILES_DIR="$HOME/.dotfiles"
+zsh_source_dir="$DOTFILES_DIR/zsh/.config/zsh"
+
+zsh -n "$DOTFILES_DIR/zsh/.zshenv"
+zsh -n "$zsh_source_dir/.zprofile"
+zsh -n "$zsh_source_dir/.zshrc"
 ~~~
 
-不修改账户登录 Shell，直接测试新配置：
+不修改账户登录 Shell，直接从仓库源目录测试新配置：
 
 ~~~bash
-env ZDOTDIR="$HOME/.config/zsh" zsh -lic '
+DOTFILES_DIR="$HOME/.dotfiles"
+
+env ZDOTDIR="$DOTFILES_DIR/zsh/.config/zsh" zsh -lic '
   echo "new zsh config loaded"
   command -v antidote starship atuin zoxide fzf
 '
 ~~~
 
 首次加载时 Antidote 会访问 GitHub 并克隆插件。只有上述测试成功，才确认 Zsh 路径已登记并修改当前用户的登录 Shell：
+
+先模拟并部署 `zsh` package。已有目标发生冲突时必须回到 dotfiles 专题完成备份和比较，不使用 `--adopt` 跳过判断：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --simulate --verbose=2 zsh
+~~~
+
+确认模拟输出只涉及预期路径且没有 conflict 后，再执行实际部署并检查关键链接：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --verbose=2 zsh
+
+for managed_path in "$HOME/.zshenv" "$HOME/.config/zsh/.zprofile" "$HOME/.config/zsh/.zshrc"; do
+  [ -L "$managed_path" ] || {
+    printf 'expected managed link: %s\n' "$managed_path" >&2
+    exit 1
+  }
+done
+~~~
+
+部署后创建权限收紧的本机覆盖，不覆盖已经存在的文件：
+
+~~~bash
+umask 077
+[ -e "$HOME/.config/zsh/local.zprofile" ] || : > "$HOME/.config/zsh/local.zprofile"
+[ -e "$HOME/.config/zsh/local.zsh" ] || : > "$HOME/.config/zsh/local.zsh"
+~~~
+
+最后才修改登录 Shell：
 
 ~~~bash
 zsh_path="$(command -v zsh)"
@@ -364,9 +415,13 @@ chsh -s "$zsh_path"
 
 ## 10. 本地与 SSH 验收
 
-本地新开终端，或者从客户端重新建立 SSH 连接，执行：
+完成第一次手工部署后，先按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#8. 固化可重复的部署和验证入口|dotfiles 部署与验证入口]] 保存 `scripts/deploy` 和 `scripts/verify`。本地新开终端，或者从客户端重新建立 SSH 连接，执行：
 
 ~~~zsh
+DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+
+"$DOTFILES_DIR/scripts/verify"
+git -C "$DOTFILES_DIR" status --short --branch
 printf 'login shell: %s\n' "$SHELL"
 printf 'current shell: '
 ps -p $$ -o comm=
@@ -407,7 +462,7 @@ atuin stats
 
 新骨架已把原生 `HISTFILE` 切到 XDG state，因此这里显式指定旧文件副本；切换后直接运行 `atuin import auto` 可能只会读到新的历史文件。导入不会删除备份。服务器命令更可能包含临时令牌、主机名或运维参数，应先阅读 [[Atuin 命令历史管理]] 的过滤规则；注册账户和跨机器同步始终是可选项。
 
-后续更新、快照和回退见 [[现代终端环境更新、验证与回退]]。
+完成 Shell 与 SSH 验证后，审查 dotfiles 的 diff、秘密边界和跟踪清单，再按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#9. 首次提交与可选远端|首次提交流程]]形成已知良好提交。后续更新、快照和回退见 [[现代终端环境更新、验证与回退]]。
 
 ## 官方参考资料
 
@@ -421,3 +476,4 @@ atuin stats
 - [Atuin：官方安装脚本源码](https://github.com/atuinsh/atuin/blob/main/install.sh)
 - [zoxide：官方安装与 fzf 版本要求](https://github.com/ajeetdsouza/zoxide)
 - [fzf：官方安装与 Shell integration](https://github.com/junegunn/fzf)
+- [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)

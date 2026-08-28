@@ -10,10 +10,10 @@ tags:
   - Ghostty
   - Zsh
 created: 2026-07-19T16:35:26
-updated: 2026-07-19T16:35:26
+updated: 2026-08-28T16:35:10
 ---
 
-Ghostty 是本地计算机上的终端模拟器，负责窗口、字体、配色、标签页、分屏和终端协议；它不负责 Zsh 插件、提示符、命令历史或目录跳转。完整组件关系见 [[现代终端环境搭建概览]]，Shell 配置见 [[Zsh 与 Antidote 跨机器配置管理]]。
+Ghostty 是本地计算机上的终端模拟器，负责窗口、字体、配色、标签页、分屏和终端协议；它不负责 Zsh 插件、提示符、命令历史或目录跳转。完整组件关系见 [[现代终端环境搭建概览]]，Shell 配置见 [[Zsh 与 Antidote 跨机器配置管理]]，配置源与实际路径的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
 
 连接 Ubuntu Server 时，Ghostty 仍然运行在本地 macOS 或 Linux 桌面端，远端只运行 Shell 和命令行程序。无图形界面的服务器通常不需要安装 Ghostty。Linux 安装方式应以具体发行版维护渠道为准，不要把第三方安装脚本描述成 Ghostty 官方预编译包。
 
@@ -38,11 +38,15 @@ zsh --version
 
 旧版本还使用 `~/.config/ghostty/config`，当前版本仍会识别它。新配置统一采用 `config.ghostty`，不要同时维护两个文件。macOS 还支持 `~/Library/Application Support/com.mitchellh.ghostty/` 下的配置，而且会在 XDG 文件之后加载；若两处都存在，后加载的 macOS 文件可能覆盖 XDG 配置，因此跨机器方案只保留 XDG 路径。
 
-先创建目录和主配置文件：
+主路线不直接在目标路径创建受管文件，而是在 dotfiles 的 `ghostty` package 中创建配置源，同时预建保持为真实目录的目标：
 
 ~~~bash
-mkdir -p "$HOME/.config/ghostty"
-touch "$HOME/.config/ghostty/config.ghostty"
+DOTFILES_DIR="$HOME/.dotfiles"
+ghostty_source_dir="$DOTFILES_DIR/ghostty/.config/ghostty"
+
+git -C "$DOTFILES_DIR" status --short --branch
+mkdir -p "$ghostty_source_dir" "$HOME/.config/ghostty"
+touch "$ghostty_source_dir/config.ghostty"
 ~~~
 
 Ghostty 的语法是每行一个 `key = value`。建议先只设置真正主观的两项：
@@ -51,6 +55,24 @@ Ghostty 的语法是每行一个 `key = value`。建议先只设置真正主观�
 # ~/.config/ghostty/config.ghostty
 font-size = 14
 theme = dark:Catppuccin Frappe,light:Catppuccin Latte
+~~~
+
+保存到 `$DOTFILES_DIR/ghostty/.config/ghostty/config.ghostty` 后，先模拟再部署。已有目标发生冲突时先按 dotfiles 专题备份和比较：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --simulate --restow --verbose=2 ghostty
+~~~
+
+确认模拟输出没有 conflict 且只涉及 Ghostty 配置后，再实际部署：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --restow --verbose=2 ghostty
 ~~~
 
 主题名称和字体名称必须以本机实际列表为准：
@@ -64,10 +86,12 @@ macOS 默认使用 `Cmd+Shift+,` 重新加载配置，Linux 默认使用 `Ctrl+S
 
 ## 3. 使用 `config-file` 分层
 
-需要同步多台桌面设备时，把上一节的字号和主题移入 `common.ghostty`，再让主文件只作为加载入口：
+需要同步多台桌面设备时，把上一节的字号和主题移入仓库源 `common.ghostty`，再让主文件只作为加载入口：
 
 ~~~bash
-touch "$HOME/.config/ghostty/common.ghostty"
+DOTFILES_DIR="$HOME/.dotfiles"
+
+touch "$DOTFILES_DIR/ghostty/.config/ghostty/common.ghostty"
 ~~~
 
 ~~~ini
@@ -95,7 +119,7 @@ config-file = ?local.ghostty
 
 `?` 表示文件不存在时忽略。相对路径以包含 `config-file` 的文件为基准。Ghostty 会在当前文件的其他设置之后处理所有 `config-file`，并按加载顺序让后面的值覆盖前面的值，因此这里形成 `common -> platform -> local` 的覆盖关系。
 
-如果确实需要平台模板，可在每台机器上只创建一个不会进入 Git 的链接：
+`macos.ghostty` 与 `linux.ghostty` 也创建在 `$DOTFILES_DIR/ghostty/.config/ghostty`，新增源文件后先重新模拟并应用 `ghostty` package。`platform.ghostty` 不进入仓库；如果确实需要平台模板，可在每台机器的真实目标目录中只创建一个链接：
 
 ~~~bash
 cd "$HOME/.config/ghostty"
@@ -205,6 +229,8 @@ ghostty +list-themes
 
 然后新建一个标签页，确认工作目录继承、[[Starship 提示符配置|Starship 提示符]]、`Ctrl-R` 的 Atuin 搜索以及 `Ctrl-T` 的 fzf 选择均正常。SSH 问题应在本地终端、远端 terminfo 和目标主机配置之间逐层定位；完整回退流程见 [[现代终端环境更新、验证与回退]]。
 
+最后确认 `config.ghostty` 与公共/平台模板是指向预期 dotfiles 仓库的链接，`local.ghostty` 和 `platform.ghostty` 没有出现在 `git -C "$DOTFILES_DIR" ls-files` 中。配置内容通过 Ghostty 验证后，再提交对应 Git diff。
+
 ## 官方参考资料
 
 - [Ghostty：配置文件、XDG 路径与 config-file](https://ghostty.org/docs/config)
@@ -214,3 +240,4 @@ ghostty +list-themes
 - [Ghostty：Terminfo 排障](https://ghostty.org/docs/help/terminfo)
 - [Ghostty：主题](https://ghostty.org/docs/features/theme)
 - [Ghostty：自定义快捷键](https://ghostty.org/docs/config/keybind)
+- [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)

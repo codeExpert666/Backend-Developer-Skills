@@ -12,10 +12,10 @@ tags:
   - Antidote
   - Dotfiles
 created: 2026-07-19T16:35:26
-updated: 2026-07-25T14:29:00
+updated: 2026-08-28T16:35:10
 ---
 
-本文给出一套可在 macOS 与 Ubuntu 间复用的 Zsh 配置骨架。Antidote 只管理 Zsh 插件；Starship、Atuin、zoxide 和 fzf 都是独立二进制，由系统包管理器安装，再从 `.zshrc` 接入。整体安装顺序见 [[现代终端环境搭建概览]]，从 Oh My Zsh 切换时先阅读 [[从 Oh My Zsh 迁移到 Antidote]]。
+本文给出一套可在 macOS 与 Ubuntu 间复用的 Zsh 配置骨架。Antidote 只管理 Zsh 插件；Starship、Atuin、zoxide 和 fzf 都是独立二进制，由系统包管理器安装，再从 `.zshrc` 接入。配置源进入普通 Git 仓库，并由 GNU Stow 部署到 Zsh 实际读取的路径；仓库初始化与链接生命周期见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。整体安装顺序见 [[现代终端环境搭建概览]]，从 Oh My Zsh 切换时先阅读 [[从 Oh My Zsh 迁移到 Antidote]]。
 
 ## 配置目标
 
@@ -27,7 +27,7 @@ updated: 2026-07-25T14:29:00
 | 提示符 | Starship | 渲染 prompt，见 [[Starship 提示符配置]] |
 | 交互工具 | Atuin、zoxide、fzf | 历史搜索、目录跳转、模糊选择 |
 
-跨机器维护的关键不是把整个主目录同步，而是只同步声明式配置，让安装目录、缓存、数据库、密钥和本机覆盖留在各自设备。
+跨机器维护的关键不是把整个主目录同步，而是只同步声明式配置，让安装目录、缓存、数据库、密钥和本机覆盖留在各自设备。本文代码注释使用运行时目标路径解释 Zsh 行为；真正写入的源路径位于 `$DOTFILES_DIR/zsh`，两者由 Stow 链接，不能当成两份独立配置维护。
 
 ## 1. 明确 Zsh 启动文件边界
 
@@ -39,7 +39,7 @@ updated: 2026-07-25T14:29:00
 
 `ZDOTDIR` 尚未设置时，Zsh 先从主目录读取 `~/.zshenv`。在这里设置 `ZDOTDIR` 后，后续用户启动文件会改从 `~/.config/zsh/` 读取。不要再同时维护根目录下的 `.zprofile` 和 `.zshrc`。
 
-建议的目录结构为：
+部署后的目标结构为：
 
 ~~~text
 ~/.zshenv
@@ -56,16 +56,22 @@ updated: 2026-07-25T14:29:00
     └── antidote.txt
 ~~~
 
-先创建目录：
+对应的仓库源结构是 `$DOTFILES_DIR/zsh/.zshenv` 与 `$DOTFILES_DIR/zsh/.config/zsh/`。先确认 dotfiles 仓库并创建源目录和真实目标目录：
 
 ~~~bash
-mkdir -p "$HOME/.config/zsh/snapshots"
+DOTFILES_DIR="$HOME/.dotfiles"
+
+git -C "$DOTFILES_DIR" status --short --branch
+mkdir -p "$DOTFILES_DIR/zsh/.config/zsh"
+mkdir -p "$HOME/.config/zsh"
 mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}"
 ~~~
 
+这里不预建空的 `snapshots/`；第一次真实保存 Antidote snapshot 时再创建它。
+
 ## 2. 保持 `.zshenv` 足够小
 
-`~/.zshenv` 只负责重定向配置目录，以及暴露确实要在 `ssh host command` 等非交互场景中使用的命令目录：
+仓库源 `$DOTFILES_DIR/zsh/.zshenv` 只负责重定向配置目录，以及暴露确实要在 `ssh host command` 等非交互场景中使用的命令目录。部署后的目标才是 `~/.zshenv`：
 
 ~~~zsh
 # ~/.zshenv
@@ -82,7 +88,7 @@ export PATH
 
 不要在 `.zshenv` 中运行 `brew shellenv`、语言版本管理器、网络命令、补全、插件或提示符初始化。它会影响脚本、IDE 后端和非交互 SSH，任何耗时或输出都会被放大。
 
-如果某个工具只需要在登录终端使用，把可共享部分直接放进 `$ZDOTDIR/.zprofile`，本机差异放进 `local.zprofile`：
+如果某个工具只需要在登录终端使用，把可共享部分写入仓库源 `$DOTFILES_DIR/zsh/.config/zsh/.zprofile`，本机差异放进部署目标中的真实 `local.zprofile`：
 
 ~~~zsh
 # ~/.config/zsh/.zprofile
@@ -116,7 +122,7 @@ test -r "$antidote_dir/antidote.zsh"
 
 ## 4. 声明最小插件清单
 
-创建 `$ZDOTDIR/.zsh_plugins.txt`：
+创建仓库源 `$DOTFILES_DIR/zsh/.config/zsh/.zsh_plugins.txt`；部署后 Zsh 仍通过 `$ZDOTDIR/.zsh_plugins.txt` 读取它：
 
 ~~~text
 # 输入建议由 Antidote 正常加载。
@@ -158,7 +164,7 @@ antidote_is_macos() {
 
 ## 5. 使用唯一、明确的 `.zshrc` 加载顺序
 
-下面的骨架可直接保存为 `~/.config/zsh/.zshrc`。它使用 Zsh 内置补全，让 fzf 保留 `Ctrl-T`，让 Atuin 独占 `Ctrl-R`，让 zoxide 的 `zi` 统一负责交互式目录选择，并确保语法高亮真正最后加载：
+下面的骨架保存为仓库源 `$DOTFILES_DIR/zsh/.config/zsh/.zshrc`，部署目标是 `~/.config/zsh/.zshrc`。它使用 Zsh 内置补全，让 fzf 保留 `Ctrl-T`，让 Atuin 独占 `Ctrl-R`，让 zoxide 的 `zi` 统一负责交互式目录选择，并确保语法高亮真正最后加载：
 
 ~~~zsh
 # ~/.config/zsh/.zshrc
@@ -244,7 +250,7 @@ fi
 
 ## 6. 划分 common、platform 与 local
 
-`common.zsh` 只放所有机器都成立的交互习惯，例如安全别名和通用环境变量：
+仓库源中的 `common.zsh` 只放所有机器都成立的交互习惯，例如安全别名和通用环境变量：
 
 ~~~zsh
 # ~/.config/zsh/common.zsh
@@ -252,15 +258,27 @@ alias gss='git status --short'
 alias glog='git log --oneline --graph --decorate -20'
 ~~~
 
-`macos.zsh` 和 `linux.zsh` 只保存平台差异；不要用它们复制一整份 `.zshrc`。主机名、公司代理、临时 SDK、私有仓库地址和秘密放入 `local.zsh` 或专用秘密管理工具，并让 `local.zsh` 保持不跟踪。
+`macos.zsh` 和 `linux.zsh` 只保存平台差异；不要用它们复制一整份 `.zshrc`。主机名、公司代理、临时 SDK、私有仓库地址和秘密放入目标目录的真实 `local.zsh` 或专用秘密管理工具。`local.zsh` 不进入 Stow package，不靠 `.gitignore` 隐藏。
 
 ## 7. 选择 pin 或 snapshot 保持可复现
 
-少量关键插件可以直接在 `.zsh_plugins.txt` 使用 `pin:<完整提交 SHA>`。如果更希望正常更新、但保留可回退点，则使用 Antidote snapshot：
+少量关键插件可以直接在 `.zsh_plugins.txt` 使用 `pin:<完整提交 SHA>`。如果更希望正常更新、但保留可回退点，则把 Antidote snapshot 直接生成到仓库源，再让 Stow 部署这个新增文件：
 
 ~~~zsh
-mkdir -p "$ZDOTDIR/snapshots"
-antidote snapshot save "$ZDOTDIR/snapshots/antidote.txt"
+DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+snapshot_source="$DOTFILES_DIR/zsh/.config/zsh/snapshots/antidote.txt"
+
+mkdir -p "${snapshot_source:h}"
+antidote snapshot save "$snapshot_source"
+"$DOTFILES_DIR/scripts/deploy" --simulate zsh
+~~~
+
+确认模拟输出只新增预期 snapshot 链接后，再应用：
+
+~~~zsh
+DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+
+"$DOTFILES_DIR/scripts/deploy" --apply zsh
 ~~~
 
 在另一台机器恢复已记录的提交：
@@ -275,18 +293,52 @@ snapshot 文件可以进入 Git；Antidote 默认数据目录中的自动快照�
 
 | 进入 Git | 不进入 Git |
 | --- | --- |
-| `~/.zshenv` 的模板或符号链接源文件 | `.zsh_plugins.zsh` 生成文件 |
+| `$DOTFILES_DIR/zsh/.zshenv` | `.zsh_plugins.zsh` 生成文件 |
 | `.zprofile`、`.zshrc` | Antidote 本体、克隆缓存和下载目录 |
 | `.zsh_plugins.txt` | `local.zsh`、`local.zprofile` |
 | `common.zsh`、`macos.zsh`、`linux.zsh` | 原生 Zsh 历史文件 |
 | 有意保存的 Antidote snapshot | Atuin 历史数据库、密钥和会话数据 |
 | `starship.toml`、Ghostty 配置、脱敏后的 Atuin 配置 | zoxide 数据库、Starship 缓存和日志 |
 
-秘密、令牌、私有代理和机器专属路径既不应进入 Git，也不应伪装成“跨平台默认值”。安装目录和缓存丢失后应能由声明式配置重新生成。
+秘密、令牌、私有代理和机器专属路径既不应进入 Git，也不应伪装成“跨平台默认值”。安装目录和缓存丢失后应能由声明式配置重新生成。完整的 source/target 映射、秘密审查、提交和远端边界统一见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
 
 ## 9. 新机器恢复与验证
 
-先部署 dotfiles，再安装独立二进制，最后克隆 Antidote：
+新机器先安装 Git 与 Stow，确认目标目录不存在，再克隆已经提交并推送的 dotfiles。远端 URL 通过交互输入，避免把个人仓库地址写进共享配置：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+if [ -e "$DOTFILES_DIR" ]; then
+  printf '停止：目标已经存在：%s\n' "$DOTFILES_DIR" >&2
+  exit 1
+fi
+
+printf 'remote repository URL: '
+IFS= read -r REPO_URL
+git clone "$REPO_URL" "$DOTFILES_DIR"
+
+git -C "$DOTFILES_DIR" status --short --branch
+git -C "$DOTFILES_DIR" log -1 --format=oneline
+~~~
+
+先检查 `$HOME` 中是否存在冲突目标；有冲突时按 dotfiles 专题备份和比较。无冲突时模拟并部署命令行主机需要的 package：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+"$DOTFILES_DIR/scripts/deploy" --simulate zsh starship atuin
+~~~
+
+确认相同 package 的模拟输出没有冲突后，再实际部署：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+"$DOTFILES_DIR/scripts/deploy" --apply zsh starship atuin
+~~~
+
+桌面机器确认已安装 Ghostty 后，再单独模拟和应用 `ghostty` package。配置部署完成后安装独立二进制，最后克隆 Antidote：
 
 ~~~bash
 antidote_root="${XDG_DATA_HOME:-$HOME/.local/share}"
@@ -316,14 +368,17 @@ exec zsh -l
 ~~~
 
 ~~~zsh
+DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+
 command -v atuin zoxide fzf starship
 antidote list
 bindkey '^R'
 type z zi
 time zsh -i -c exit
+git -C "$DOTFILES_DIR" status --short --branch
 ~~~
 
-`Ctrl-R` 应打开 Atuin，`Ctrl-T` 应由 fzf 选择文件，`Alt-C` 不应被 fzf 绑定，`z` / `zi` 应由 zoxide 提供；输入有效和无效命令时应出现语法着色。任何一项失败，都先注释最后一个初始化块并重新执行 `zsh -n`，不要同时重排所有组件。
+`Ctrl-R` 应打开 Atuin，`Ctrl-T` 应由 fzf 选择文件，`Alt-C` 不应被 fzf 绑定，`z` / `zi` 应由 zoxide 提供；输入有效和无效命令时应出现语法着色。dotfiles 工作区不应因恢复过程产生意外修改。任何一项失败，都先注释最后一个初始化块并重新执行 `zsh -n`，不要同时重排所有组件。
 
 ## 官方参考资料
 
@@ -336,3 +391,4 @@ time zsh -i -c exit
 - [zoxide：Zsh 初始化顺序](https://github.com/ajeetdsouza/zoxide)
 - [Starship：Zsh 初始化](https://starship.rs/guide/)
 - [zsh-syntax-highlighting：加载顺序](https://github.com/zsh-users/zsh-syntax-highlighting)
+- [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)

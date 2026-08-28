@@ -12,12 +12,12 @@ tags:
   - Antidote
   - Ghostty
 created: 2026-07-19T16:30:50
-updated: 2026-07-25T14:29:00
+updated: 2026-08-28T16:35:10
 ---
 
-本文从 macOS 的系统 Zsh 开始，搭建 Ghostty + Zsh + Antidote + Starship + Atuin + zoxide + fzf。完成后，Ghostty 负责本地图形终端，Antidote 只管理 Zsh 插件，其余工具由 Homebrew 管理；Zsh 配置集中在 `~/.config/zsh`，便于与 Ubuntu 复用。
+本文从 macOS 的系统 Zsh 开始，搭建 Ghostty + Zsh + Antidote + Starship + Atuin + zoxide + fzf。完成后，Ghostty 负责本地图形终端，Antidote 只管理 Zsh 插件，其余工具由 Homebrew 管理；可复用配置进入普通 Git dotfiles 仓库，并由 GNU Stow 部署到 `~/.config`，便于与 Ubuntu 复用和恢复。
 
-开始前先阅读 [[现代终端环境搭建概览]]。已有 Oh My Zsh 时不要直接执行本文的配置切换，应改走 [[从 Oh My Zsh 迁移到 Antidote]]。各组件的深入配置见 [[Ghostty 常用配置与 Shell 集成]]、[[Zsh 与 Antidote 跨机器配置管理]] 和 [[Atuin 命令历史管理]]。
+开始前先阅读 [[现代终端环境搭建概览]] 和 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。已有 Oh My Zsh 时不要直接执行本文的配置切换，应改走 [[从 Oh My Zsh 迁移到 Antidote]]。各组件的深入配置见 [[Ghostty 常用配置与 Shell 集成]]、[[Zsh 与 Antidote 跨机器配置管理]] 和 [[Atuin 命令历史管理]]。
 
 ## 目标与边界
 
@@ -26,6 +26,7 @@ updated: 2026-07-25T14:29:00
 - 继续使用 Apple 提供的 `/bin/zsh`，不把 Homebrew Zsh 设为登录 Shell；
 - Ghostty 只安装在当前 Mac，用它 SSH 到服务器时，不要求远端安装 Ghostty；
 - Homebrew 安装 Ghostty、Starship、Atuin、zoxide 与 fzf；
+- Git 保存配置源，GNU Stow 使用 `--no-folding` 把受管文件链接到 `$HOME`；
 - Antidote 从官方 Git 仓库安装到 `${XDG_DATA_HOME:-$HOME/.local/share}/antidote`，与 Ubuntu 保持相同路径；
 - Atuin 先作为本地历史工具使用，不要求注册或启用同步；
 - `Ctrl-R` 由 Atuin 接管，上方向键保持 Zsh 原有行为，Atuin AI 入口显式关闭；
@@ -118,11 +119,11 @@ Apple Silicon 通常使用 `/opt/homebrew`，Intel Mac 通常使用 `/usr/local`
 
 ## 4. 安装 Ghostty 与独立命令行工具
 
-通过 Homebrew 安装 Ghostty cask 和四个独立命令行工具：
+通过 Homebrew 安装 Ghostty cask、GNU Stow 和四个独立命令行工具：
 
 ~~~bash
 brew install --cask ghostty
-brew install starship atuin zoxide fzf
+brew install stow starship atuin zoxide fzf
 ~~~
 
 Ghostty 的 Homebrew cask 由社区维护，但重新封装的是 Ghostty 官方签名与公证的 macOS `.dmg`。若不使用 Homebrew，也可从 Ghostty 官方下载页获取 `.dmg`，拖入“应用程序”。
@@ -131,6 +132,7 @@ Ghostty 的 Homebrew cask 由社区维护，但重新封装的是 Ghostty 官方
 
 ~~~bash
 brew list --cask ghostty
+stow --version
 starship --version
 atuin --version
 zoxide --version
@@ -159,25 +161,35 @@ test -r "$antidote_dir/antidote.zsh"
 
 Homebrew 公式 `brew install antidote` 也可用，但它的加载路径与 Ubuntu 不同。跨机器配置主路线统一使用 Git 安装目录；该目录和 Antidote 缓存都不提交到配置仓库。
 
-## 6. 建立 XDG 与 ZDOTDIR 目录
+## 6. 建立 dotfiles 源目录与 XDG 目标目录
 
-先创建配置文件，不覆盖内容：
+先按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]] 初始化普通 Git 仓库。本文用 `$HOME/.dotfiles` 作为示例；若选择了其他位置，只修改 `DOTFILES_DIR`。先确认它确实是预期仓库：
 
 ~~~bash
-mkdir -p "$HOME/.config/zsh" "$HOME/.config/ghostty" "$HOME/.config/atuin"
-touch "$HOME/.config/zsh/.zprofile"
-touch "$HOME/.config/zsh/.zshrc"
-touch "$HOME/.config/zsh/.zsh_plugins.txt"
-touch "$HOME/.config/zsh/common.zsh"
-touch "$HOME/.config/zsh/macos.zsh"
-touch "$HOME/.config/zsh/linux.zsh"
-touch "$HOME/.config/zsh/local.zprofile"
-touch "$HOME/.config/zsh/local.zsh"
+DOTFILES_DIR="$HOME/.dotfiles"
+
+git -C "$DOTFILES_DIR" status --short --branch
+git -C "$DOTFILES_DIR" rev-parse --show-toplevel
 ~~~
+
+然后在 `zsh` package 中创建配置源，并预建用于容纳符号链接和本机覆盖的真实目标目录：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+zsh_source_dir="$DOTFILES_DIR/zsh/.config/zsh"
+
+mkdir -p "$zsh_source_dir" "$HOME/.config/zsh"
+touch "$DOTFILES_DIR/zsh/.zshenv"
+touch "$zsh_source_dir/.zprofile"
+touch "$zsh_source_dir/.zshrc"
+touch "$zsh_source_dir/.zsh_plugins.txt"
+~~~
+
+这里不创建仓库中的 `local.zprofile` 或 `local.zsh`。它们是部署后位于 `$HOME/.config/zsh` 的本机真实文件，不能成为符号链接源。
 
 ### 配置 `~/.zshenv`
 
-将下列最小内容合并到 `~/.zshenv`。若文件原本存在，先对照备份逐项迁移，不要直接丢弃组织策略或必要环境变量：
+将下列最小内容保存到 `$DOTFILES_DIR/zsh/.zshenv`。若 `~/.zshenv` 原本存在，先按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#7. 安全接管已经存在的配置|安全接管已有配置]] 对照备份、选择内容并处理 Stow 冲突，不要直接覆盖：
 
 ~~~zsh
 export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
@@ -196,7 +208,7 @@ export PATH
 
 ### 配置 `.zprofile`
 
-将下列内容保存为 `~/.config/zsh/.zprofile`：
+将下列内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zprofile`；Stow 部署后，运行时目标才是 `~/.config/zsh/.zprofile`：
 
 ~~~zsh
 # 只在登录 Shell 中加载 Homebrew 的完整环境。
@@ -209,11 +221,11 @@ fi
 [[ -r "$ZDOTDIR/local.zprofile" ]] && source "$ZDOTDIR/local.zprofile"
 ~~~
 
-机器私有的登录环境可放入 `local.zprofile`，并从配置仓库忽略该文件。
+机器私有的登录环境放入部署后创建的 `~/.config/zsh/local.zprofile`。它不位于 dotfiles 源树，因此不依赖 `.gitignore` 才能保持不跟踪。
 
 ## 7. 声明最小插件集合
 
-将下列内容保存为 `~/.config/zsh/.zsh_plugins.txt`：
+将下列内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zsh_plugins.txt`：
 
 ~~~text
 zsh-users/zsh-autosuggestions
@@ -226,7 +238,7 @@ zsh-users/zsh-syntax-highlighting kind:clone
 
 ## 8. 写入 `.zshrc` 骨架
 
-将下列内容保存为 `~/.config/zsh/.zshrc`：
+将下列内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zshrc`；代码注释仍使用运行时目标路径，便于理解 Zsh 实际读取什么：
 
 ~~~zsh
 # 使用 XDG state 保存原生 Zsh 历史，作为 Atuin 之外的本地回退。
@@ -294,17 +306,55 @@ if (( $+functions[antidote] )); then
 fi
 ~~~
 
-`common.zsh` 适合放跨平台别名和函数，`macos.zsh` 只放 macOS 专属设置，`local.zsh` 放代理或机器私有路径。先保持三个文件为空也完全可用，不要在不同文件中重复初始化同一工具。
+需要第一条跨平台别名或函数时，再在仓库源树创建 `common.zsh`；出现第一项 macOS 专属设置时再创建 `macos.zsh`。缺少这两个可选文件时，前面的可读性判断会自然跳过。`local.zsh` 放代理或机器私有路径，并在 Stow 部署后作为目标目录中的真实文件创建。不要为了目录看起来完整而创建空配置，也不要在不同文件中重复初始化同一工具。
 
 ## 9. 先检查，再切换配置
 
-不要直接在当前窗口执行 `source ~/.zshrc`，因为启用 `ZDOTDIR` 后真正的配置文件已经改变。先做语法检查：
+不要直接在当前窗口执行 `source ~/.zshrc`。先检查仓库源文件，尚未部署时不能用目标路径代替：
 
 ~~~bash
-zsh -n "$HOME/.zshenv"
-zsh -n "$HOME/.config/zsh/.zprofile"
-zsh -n "$HOME/.config/zsh/.zshrc"
+DOTFILES_DIR="$HOME/.dotfiles"
+zsh_source_dir="$DOTFILES_DIR/zsh/.config/zsh"
+
+zsh -n "$DOTFILES_DIR/zsh/.zshenv"
+zsh -n "$zsh_source_dir/.zprofile"
+zsh -n "$zsh_source_dir/.zshrc"
 ~~~
+
+源文件通过语法检查后，先模拟 Stow。已有目标发生冲突时必须回到 dotfiles 专题完成备份和比较，不使用 `--adopt` 跳过判断：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --simulate --verbose=2 zsh
+~~~
+
+确认模拟输出只涉及预期路径且没有 conflict 后，再执行实际部署并检查关键链接：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
+  --verbose=2 zsh
+
+for managed_path in "$HOME/.zshenv" "$HOME/.config/zsh/.zprofile" "$HOME/.config/zsh/.zshrc"; do
+  [ -L "$managed_path" ] || {
+    printf 'expected managed link: %s\n' "$managed_path" >&2
+    exit 1
+  }
+done
+~~~
+
+部署完成后创建权限收紧的本机覆盖，不覆盖已经存在的文件：
+
+~~~bash
+umask 077
+[ -e "$HOME/.config/zsh/local.zprofile" ] || : > "$HOME/.config/zsh/local.zprofile"
+[ -e "$HOME/.config/zsh/local.zsh" ] || : > "$HOME/.config/zsh/local.zsh"
+~~~
+
+完成第一次手工部署后，按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#8. 固化可重复的部署和验证入口|dotfiles 部署与验证入口]] 保存 `scripts/deploy` 和 `scripts/verify`，并先运行最低验证。
 
 然后保留当前窗口，另开一个全新终端，或在确认当前命令已经保存后执行：
 
@@ -355,13 +405,15 @@ Ghostty 的配置路径、字体、分屏和 SSH 终端能力见 [[Ghostty 常�
 
 在 Ghostty 的新标签页中依次验证：
 
-1. `Ctrl-R` 打开 Atuin，按 `Esc` 返回；
-2. 输入历史命令的一部分，自动建议出现在光标后；
-3. 输入不存在的命令，语法高亮能改变显示；
-4. 进入几个目录后，`z <关键词>` 能跳转，`zi` 能打开 fzf 选择；
-5. `Ctrl-T` 能用 fzf 选择文件；
-6. 进入 Git 仓库，Starship 能显示仓库状态；
-7. `zsh -lic 'echo startup-ok'` 能输出 `startup-ok`。
+1. `$HOME/.zshenv`、`$HOME/.config/zsh/.zprofile` 和 `$HOME/.config/zsh/.zshrc` 是指向预期 dotfiles 仓库的符号链接，`scripts/verify` 通过；
+2. `Ctrl-R` 打开 Atuin，按 `Esc` 返回；
+3. 输入历史命令的一部分，自动建议出现在光标后；
+4. 输入不存在的命令，语法高亮能改变显示；
+5. 进入几个目录后，`z <关键词>` 能跳转，`zi` 能打开 fzf 选择；
+6. `Ctrl-T` 能用 fzf 选择文件；
+7. 进入 Git 仓库，Starship 能显示仓库状态；
+8. `zsh -lic 'echo startup-ok'` 能输出 `startup-ok`；
+9. dotfiles 的 diff 已审查，不含本机覆盖、历史、密钥或缓存，并已按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#9. 首次提交与可选远端|首次提交流程]]形成已知良好提交。
 
 任何一项失败时先不要增加主题和插件，按 [[现代终端环境更新、验证与回退]] 检查加载顺序、版本与实际配置目录。
 
@@ -376,3 +428,4 @@ Ghostty 的配置路径、字体、分屏和 SSH 终端能力见 [[Ghostty 常�
 - [Atuin：按键配置与关闭默认绑定](https://docs.atuin.sh/cli/configuration/key-binding/)
 - [zoxide：官方安装与 Zsh 初始化](https://github.com/ajeetdsouza/zoxide)
 - [fzf：官方安装与 Shell integration](https://github.com/junegunn/fzf)
+- [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)
