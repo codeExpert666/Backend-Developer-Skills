@@ -10,7 +10,7 @@ tags:
   - Ghostty
   - Zsh
 created: 2026-07-19T16:35:26
-updated: 2026-08-28T16:35:10
+updated: 2026-08-28T17:10:03
 ---
 
 Ghostty 是本地计算机上的终端模拟器，负责窗口、字体、配色、标签页、分屏和终端协议；它不负责 Zsh 插件、提示符、命令历史或目录跳转。完整组件关系见 [[现代终端环境搭建概览]]，Shell 配置见 [[Zsh 与 Antidote 跨机器配置管理]]，配置源与实际路径的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
@@ -30,7 +30,7 @@ zsh --version
 
 ## 2. 使用统一的 XDG 配置路径
 
-当前 Ghostty 优先使用以下 XDG 配置文件：
+这里的 XDG 配置路径是 `XDG_CONFIG_HOME` 下的 Ghostty 配置目录；变量含义、默认值和职责边界见 [[现代终端环境搭建概览#先理解 XDG 基础目录规范|XDG 基础目录规范]]。本套主路线不额外设置该变量，按默认值使用以下配置文件：
 
 ~~~text
 ~/.config/ghostty/config.ghostty

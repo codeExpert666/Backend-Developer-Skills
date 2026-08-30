@@ -11,12 +11,12 @@ tags:
   - Dotfiles
   - GNU-Stow
 created: 2026-08-28T16:05:55
-updated: 2026-08-28T16:37:24
+updated: 2026-08-29T21:23:53
 ---
 
 本文为 [[现代终端环境搭建概览]] 建立真正可交付的 dotfiles（个人配置文件）成果：使用一个普通 Git 仓库保存声明式配置，再由 GNU Stow 把仓库中的文件以符号链接部署到 `$HOME`。完成后，配置源文件、实际生效路径、机器私有覆盖和运行数据各有明确边界，并能在 macOS 与 Ubuntu 之间安全恢复。
 
-本文只管理个人配置，不替代平台软件安装。Git 与 Stow 的安装入口分别见 [[Git 安装与初始配置概览]]、[[macOS 从零搭建现代终端环境]] 和 [[Ubuntu 从零搭建现代终端环境]]；终端组件的安装、加载顺序和运行验证仍由相应专题负责。
+本文只管理个人配置，不替代平台软件安装。Git 与 Stow 的安装入口分别见 [[Git 安装与初始配置概览]]、[[macOS 从零搭建现代终端环境]] 和 [[Ubuntu 从零搭建现代终端环境]]；终端组件的配置内容、加载顺序和运行验证分别由 [[Zsh 与 Antidote 跨机器配置管理]]、[[Ghostty 常用配置与 Shell 集成]]、[[Starship 提示符配置]]、[[Atuin 命令历史管理]] 和 [[zoxide 与 fzf 导航和模糊查找]] 负责。本文只先说明每类配置文件为什么出现在仓库、由 Stow 部署到哪里，以及如何安全维护它们的生命周期。
 
 > [!info] 资料核对范围
 > 本文于 2026-08-28 核对 GNU Stow 2.4.1 官方手册、Git 官方文档、XDG Base Directory Specification、GitHub 安全文档，以及 chezmoi、yadm 官方说明。具体机器尚未按本文执行时，只能称为“教程已整理”，不能称为“本机已部署”。
@@ -45,11 +45,11 @@ $HOME 下应用真正读取的目标路径
         └── XDG state、data、cache 中的运行数据
 ~~~
 
-`$HOME/.config` 仍是应用读取配置的默认位置；仓库只是配置源。XDG 规范把配置、持久状态、可重新生成的缓存和用户数据分开，这也是本文不把 Atuin 历史或 zoxide 数据库放进 dotfiles 的基础。
+`$HOME/.config` 是未设置 `XDG_CONFIG_HOME` 时的规范默认配置目录；支持这套规范并采用该位置的应用会从这里读取配置，仓库则只是配置源。[[现代终端环境搭建概览#先理解 XDG 基础目录规范|XDG 基础目录规范]]把配置、持久状态、可重新生成的缓存和用户数据分开，这也是本文不把 Atuin 历史或 zoxide 数据库放进 dotfiles 的基础。
 
 ## 2. 为什么主路线选择普通 Git 仓库与 Stow
 
-GNU Stow 是符号链接树管理器。仓库中的每个顶层 package 都按目标目录的相对结构组织，Stow 再把其中的文件链接到统一目标 `$HOME`。这套现代终端环境只涉及 macOS、Ubuntu 和少量明确的平台差异，使用 Stow 可以保留三个重要特性：
+GNU Stow 是符号链接树管理器。本文把直接位于 dotfiles 仓库根目录、并作为一个整体交给 Stow 部署的配置目录称为 Stow package（配置包）。每个 package 内部都按目标目录的相对结构组织，Stow 再把其中的文件链接到统一目标 `$HOME`。这套现代终端环境只涉及 macOS、Ubuntu 和少量明确的平台差异，使用 Stow 可以保留三个重要特性：
 
 1. dotfiles 是普通 Git 工作区，可直接使用 `git status`、`git diff`、提交和远端。
 2. 仓库中的文件保持真实名称和目录结构，不需要先学习模板文件名编码。
@@ -143,10 +143,12 @@ git -C "$DOTFILES_DIR" branch --show-current
 git -C "$DOTFILES_DIR" status --short --branch
 ~~~
 
-四个 Stow package 的目录名表达配置职责，目录内部镜像 `$HOME` 下的目标结构。不要在初始化时批量预建空目录；按平台和组件专题写入第一份有效配置时，再同时创建对应 package。完整目标结构如下：
+前面的命令已经把 `$DOTFILES_DIR` 创建为 dotfiles 仓库根目录。后续按平台和组件专题写入第一份有效配置时，会在这个根目录下分别创建 `zsh/`、`ghostty/`、`starship/` 和 `atuin/`；它们各自构成一个前文定义的 Stow package，目录内部镜像 `$HOME` 下的目标结构。`README.md` 和 `scripts/` 也位于仓库根目录，但分别承担仓库说明和运维入口职责，不是要部署到 `$HOME` 的 package。
+
+不要在初始化时批量预建空目录。随着真实配置和运维入口逐步完成，仓库源可以形成下面的结构：
 
 ~~~text
-dotfiles/
+$DOTFILES_DIR/
 ├── README.md
 ├── zsh/
 │   ├── .zshenv
@@ -174,7 +176,27 @@ dotfiles/
     └── verify
 ~~~
 
-不要为了匹配这棵树预建没有实际内容的空配置。平台笔记写入第一份有效配置时再创建相应文件；Antidote snapshot 也只在真实生成后进入 Git。
+这棵树是“最终可能形成的仓库源蓝图”，不是初始化后必须立即出现的文件清单，也不是 Stow 部署后的 `$HOME` 目录树。各文件先按下面的职责理解；配置内容和组件级验证由链接的专题继续展开。
+
+| 仓库源路径 | 简要职责与创建时机 | Stow 部署后的去向或边界 | 详细说明 |
+| --- | --- | --- | --- |
+| `README.md` | fresh clone（从远端全新克隆得到的工作副本）后的第一入口；初始化时先创建标题，首次提交前再补齐真实支持范围、部署和恢复说明 | 留在仓库根目录，不由 Stow 部署 | 本节下文 |
+| `zsh/.zshenv` | 所有 Zsh 都会读取的最小引导；开始建立 Zsh 配置时创建，只设置 `ZDOTDIR` 和非交互命令必须看到的最小 PATH | `~/.zshenv` | [[Zsh 与 Antidote 跨机器配置管理]] |
+| `zsh/.config/zsh/.zprofile` | 登录 Shell 的环境入口；建立基础 Zsh 骨架时创建，并按需加载不入库的 `local.zprofile` | `~/.config/zsh/.zprofile` | [[Zsh 与 Antidote 跨机器配置管理]] |
+| `zsh/.config/zsh/.zshrc` | 交互式 Zsh 的唯一编排入口，负责补全、插件、按键、Atuin、zoxide、fzf 和 Starship 的加载顺序 | `~/.config/zsh/.zshrc` | [[Zsh 与 Antidote 跨机器配置管理]] |
+| `zsh/.config/zsh/.zsh_plugins.txt` | Antidote 的声明式插件清单；确定第一组插件时创建，描述“加载什么以及如何加载”，不是生成的加载文件 | `~/.config/zsh/.zsh_plugins.txt` | [[Zsh 与 Antidote 跨机器配置管理]] |
+| `zsh/.config/zsh/` 下的 `common.zsh`、`macos.zsh`、`linux.zsh` | 分别保存跨平台、macOS 和 Linux 配置；出现第一项真实内容时才按需创建，`.zshrc` 会按当前平台选择 | `~/.config/zsh/` 下的同名文件 | [[Zsh 与 Antidote 跨机器配置管理]] |
+| `zsh/.config/zsh/snapshots/antidote.txt` | 可选的 Antidote 插件版本快照，用完整提交标识保存经过验证的恢复点；只有真实生成 snapshot 后才创建 | `~/.config/zsh/snapshots/antidote.txt` | [[Zsh 与 Antidote 跨机器配置管理]] |
+| `ghostty/.config/ghostty/config.ghostty` | Ghostty 主入口，固定公共、平台和本机配置的加载顺序；只在安装 Ghostty 的桌面机器需要该 package | `~/.config/ghostty/config.ghostty` | [[Ghostty 常用配置与 Shell 集成]] |
+| `ghostty/.config/ghostty/` 下的 `common.ghostty`、`macos.ghostty`、`linux.ghostty` | 分别保存公共设置和可跟踪的平台模板；需要共享值或出现平台差异时才创建 | `~/.config/ghostty/` 下的同名文件 | [[Ghostty 常用配置与 Shell 集成]] |
+| `starship/.config/starship.toml` | Starship 提示符配置源；开始维护默认值以外的提示符行为时创建 | `~/.config/starship.toml` | [[Starship 提示符配置]] |
+| `atuin/.config/atuin/config.toml` | 经过脱敏的 Atuin 通用偏好和过滤规则；需要跨机器复用这些选择时创建，不保存历史、密钥或登录会话（session） | `~/.config/atuin/config.toml` | [[Atuin 命令历史管理]] |
+| `scripts/deploy` | 统一封装 Stow 的模拟与应用参数，并限制可部署的 package；第一次手工部署成功后再固化 | 留在仓库中执行，本身不是 Stow package | [[#8. 固化可重复的部署和验证入口]] |
+| `scripts/verify` | 检查关键链接是否来自当前仓库、目标目录是否保持为真实目录，并执行最低 Zsh 语法检查 | 留在仓库中执行，不能替代组件运行验证 | [[#8. 固化可重复的部署和验证入口]] |
+
+目标机器专属文件故意不出现在仓库源树中：`local.zprofile`、`local.zsh` 和 `local.ghostty` 是部署后创建的真实文件；`platform.ghostty` 是当前桌面按需选择 `macos.ghostty` 或 `linux.ghostty` 的本机入口。生成的 `.zsh_plugins.zsh`、历史数据库、密钥、session 和缓存同样不属于仓库源。下一节会在这个职责模型上进一步划分 Git 跟踪边界。
+
+不要为了匹配这棵树预建没有实际内容的空配置。平台或组件专题写入第一份有效配置时再创建相应文件；Antidote snapshot 也只在真实生成后进入 Git。
 
 `README.md` 是 fresh clone 后的第一入口，不能长期停留在初始化时的一行标题。首次提交前，至少补齐支持范围、package、前提、部署顺序、验证入口和私有数据边界。例如：
 
@@ -203,6 +225,8 @@ README 只能描述仓库真实拥有的 package 和已验证平台；尚未运�
 
 ## 5. 明确进入和不进入仓库的内容
 
+第 4 节解决“仓库中为什么有这些文件”；本节继续解决“哪些内容可以提交，哪些必须留在当前机器或运行时目录”。
+
 | package | 进入 Git 的配置源 | 不进入该 package 的内容 |
 | --- | --- | --- |
 | `zsh` | `.zshenv`、`.zprofile`、`.zshrc`、插件清单、common 与平台配置、选定 snapshot | `local.zsh`、`local.zprofile`、历史、补全缓存、生成的 `.zsh_plugins.zsh` |
@@ -228,7 +252,7 @@ mkdir -p "$HOME/.config/zsh" "$HOME/.config/ghostty"
 
 ## 6. 从零部署：先模拟，再应用
 
-先按平台笔记把配置写入上面的 package 源路径。准备部署时，预先创建需要容纳本机文件的真实目录：
+先按 [[macOS 从零搭建现代终端环境]] 或 [[Ubuntu 从零搭建现代终端环境]] 写入基础 Zsh 配置；需要 Ghostty、Starship 或 Atuin 配置时，再分别按 [[Ghostty 常用配置与 Shell 集成]]、[[Starship 提示符配置]] 和 [[Atuin 命令历史管理]] 创建对应 package 源文件。本文不重复这些配置内容，只从已经存在且经过语法或格式检查的配置源开始部署。准备部署时，预先创建需要容纳符号链接和本机文件的真实目录：
 
 > [!warning] 必须显式选择 package
 > 不要在仓库根目录运行 `stow *`。`scripts/` 是仓库工具目录，不是要部署到 `$HOME` 的 Stow package；通配符还可能选中 README 等非 package 内容。每次模拟和应用都应写出同一组明确名称。
@@ -699,7 +723,7 @@ DOTFILES_DIR="$HOME/.dotfiles"
 # 安装 Ghostty 的桌面机器另行应用已经模拟过的 ghostty package。
 ~~~
 
-随后按平台笔记安装 Zsh、Antidote、Starship、Atuin、zoxide 和 fzf，创建本机 `local` 文件，让 Antidote 根据清单恢复插件，最后执行：
+随后按 [[macOS 从零搭建现代终端环境]] 或 [[Ubuntu 从零搭建现代终端环境]] 安装 Zsh、Antidote、Starship、Atuin、zoxide 和 fzf；共享 Zsh 的文件职责与加载顺序见 [[Zsh 与 Antidote 跨机器配置管理]]。安装完成后创建本机 `local` 文件，让 Antidote 根据清单恢复插件，最后执行：
 
 ~~~bash
 DOTFILES_DIR="$HOME/.dotfiles"

@@ -12,7 +12,7 @@ tags:
   - Antidote
   - Dotfiles
 created: 2026-07-19T16:35:26
-updated: 2026-08-28T16:35:10
+updated: 2026-08-28T17:10:03
 ---
 
 本文给出一套可在 macOS 与 Ubuntu 间复用的 Zsh 配置骨架。Antidote 只管理 Zsh 插件；Starship、Atuin、zoxide 和 fzf 都是独立二进制，由系统包管理器安装，再从 `.zshrc` 接入。配置源进入普通 Git 仓库，并由 GNU Stow 部署到 Zsh 实际读取的路径；仓库初始化与链接生命周期见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。整体安装顺序见 [[现代终端环境搭建概览]]，从 Oh My Zsh 切换时先阅读 [[从 Oh My Zsh 迁移到 Antidote]]。
@@ -28,6 +28,8 @@ updated: 2026-08-28T16:35:10
 | 交互工具 | Atuin、zoxide、fzf | 历史搜索、目录跳转、模糊选择 |
 
 跨机器维护的关键不是把整个主目录同步，而是只同步声明式配置，让安装目录、缓存、数据库、密钥和本机覆盖留在各自设备。本文代码注释使用运行时目标路径解释 Zsh 行为；真正写入的源路径位于 `$DOTFILES_DIR/zsh`，两者由 Stow 链接，不能当成两份独立配置维护。
+
+本文会分别使用 XDG 的配置、数据、状态和缓存目录；这些目录的职责、默认值及与 Git、Stow 的边界见 [[现代终端环境搭建概览#先理解 XDG 基础目录规范|XDG 基础目录规范]]。
 
 ## 1. 明确 Zsh 启动文件边界
 
