@@ -13,12 +13,15 @@ tags:
   - fzf
   - 命令行效率
 created: 2026-07-19T16:33:48
-updated: 2026-08-28T16:35:10
+updated: 2026-08-30T22:24:37
 ---
 
 zoxide 与 fzf 都能减少路径输入，但解决的问题不同：zoxide 根据使用频率记住目录，fzf 从候选文本中进行模糊选择。本方案让 zoxide 负责目录跳转、fzf 负责文件选择，并把历史搜索明确交给 [[Atuin 命令历史管理]]。
 
 安装全套环境见 [[现代终端环境搭建概览]]，dotfiles 源与运行时配置的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]，Zsh 与 Antidote 的配置边界见 [[Zsh 与 Antidote 跨机器配置管理]]，更新和回退见 [[现代终端环境更新、验证与回退]]。
+
+> [!tip] 何时打开本文
+> 主线已经安装并初始化 zoxide 与 fzf。只有要调整按键分工、导入旧目录数据、定制搜索输入或排查 `zi` / `fzf --zsh` 时，才继续本文。
 
 ## 1. 先固定职责和按键
 
@@ -33,42 +36,18 @@ zoxide 与 fzf 都能减少路径输入，但解决的问题不同：zoxide 根�
 
 `zi` 根据已经访问过的目录及其使用频率选择；fzf 的 `Alt-C` 更偏向扫描当前目录树。若你确实依赖后者，可以保留 `Alt-C`，但不应再把两个入口描述成同一种能力。
 
-## 2. 安装二进制
+## 2. 确认版本、路径与集成能力
 
-macOS 使用 Homebrew：
-
-~~~bash
-brew install zoxide fzf
-~~~
-
-Ubuntu 应优先按 [[Ubuntu 从零搭建现代终端环境]] 选择当前上游兼容的 fzf 安装方式。发行版仓库只作为备选；先查看候选版本：
+安装命令只在场景主线维护。本专题先确认当前 Shell 实际调用的是哪一份二进制：
 
 ~~~bash
-apt-cache policy fzf
-~~~
-
-只有候选版本至少为 `0.51.0`，并且该包提供 `fzf --zsh` 时，才使用 `sudo apt install fzf`。版本较旧时不要先安装再叠加另一份 fzf，否则 PATH 先后顺序会让实际版本难以判断。
-
-zoxide 上游指出 Debian 和 Ubuntu 仓库中的版本更新较慢，当前推荐使用其官方安装器。先下载到临时文件并阅读，再执行本地副本：
-
-~~~bash
-zoxide_setup="$(mktemp)"
-curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh -o "$zoxide_setup"
-less "$zoxide_setup"
-sh "$zoxide_setup"
-rm -f "$zoxide_setup"
-~~~
-
-在 `less` 中检查内容，按 `q` 返回后才继续。这仍是从网络取得并执行官方脚本；受管服务器应先确认软件来源策略。若不允许，可改用 zoxide 官方列出的 Cargo、Nix 或 Linuxbrew 安装方式，不要随意添加来源不明的 APT 仓库。
-
-确认版本：
-
-~~~bash
+command -v zoxide fzf
 zoxide --version
 fzf --version
+fzf --zsh >/dev/null
 ~~~
 
-zoxide 当前要求用于交互选择的 fzf 至少为 `0.51.0`。Ubuntu 仓库版本过旧时，`z` 仍可使用，但应按 fzf 官方安装说明升级后再启用 `zi` 和嵌入式 `fzf --zsh` 集成。
+最后一条成功才说明当前 fzf 提供本文使用的嵌入式 Zsh 集成。若失败，回到当前平台主线检查版本和安装来源；不要在原路径旁边再叠加一份不清楚优先级的 fzf。
 
 ## 3. 使用唯一的初始化顺序
 

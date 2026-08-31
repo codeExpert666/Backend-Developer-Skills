@@ -10,27 +10,28 @@ tags:
   - Ghostty
   - Zsh
 created: 2026-07-19T16:35:26
-updated: 2026-08-28T17:10:03
+updated: 2026-08-31T13:18:23
 ---
 
 Ghostty 是本地计算机上的终端模拟器，负责窗口、字体、配色、标签页、分屏和终端协议；它不负责 Zsh 插件、提示符、命令历史或目录跳转。完整组件关系见 [[现代终端环境搭建概览]]，Shell 配置见 [[Zsh 与 Antidote 跨机器配置管理]]，配置源与实际路径的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
 
+> [!tip] 何时打开本文
+> macOS 主线已经在首次启动 Ghostty 前部署了最小受管配置。只有要改变配置归属、定制字体、主题、分层配置、Shell Integration，或排查 SSH terminfo 时，才继续本文。
+
 连接 Ubuntu Server 时，Ghostty 仍然运行在本地 macOS 或 Linux 桌面端，远端只运行 Shell 和命令行程序。无图形界面的服务器通常不需要安装 Ghostty。Linux 安装方式应以具体发行版维护渠道为准，不要把第三方安装脚本描述成 Ghostty 官方预编译包。
 
-## 1. 先以零配置运行
+## 1. 先决定配置归属，不急着启动
 
-Ghostty 的默认配置已经包含可用字体、配色和 Zsh 自动集成。第一次启动后，先直接使用默认值并确认基础环境：
+Ghostty 的默认配置已经包含可用字体、配色和 Zsh 自动集成，但“可以零配置运行”与“准备由 Stow 托管配置”是两条不同路径：
 
-~~~zsh
-printf 'shell=%s\nterm=%s\n' "$SHELL" "$TERM"
-zsh --version
-~~~
+- 明确长期使用默认值、不管理 Ghostty 配置时，可以直接启动，不创建 `ghostty` 软件包；
+- 准备让 `~/.config/ghostty/config.ghostty` 进入 dotfiles 时，先执行第 2 节创建源、Stow 部署并验证链接，再首次启动。
 
-正常情况下，在 Ghostty 中启动的终端会使用 `xterm-ghostty`。如果默认字体、字号和快捷键已经合适，就不必为了“完整配置”重复声明默认值；显式配置越少，跨版本维护成本越低。
+Ghostty 在缺少非空配置时可能在启动过程中创建默认配置及父目录。若应用先写出普通文件，后续 Stow 会报告冲突。因此，不要为了“先看看效果”启动一次，再尝试让 Stow 接管同一路径。显式配置应保持最小，但配置所有权必须在首次运行前确定。
 
 ## 2. 使用统一的 XDG 配置路径
 
-这里的 XDG 配置路径是 `XDG_CONFIG_HOME` 下的 Ghostty 配置目录；变量含义、默认值和职责边界见 [[现代终端环境搭建概览#先理解 XDG 基础目录规范|XDG 基础目录规范]]。本套主路线不额外设置该变量，按默认值使用以下配置文件：
+这里的 XDG 配置路径是 `XDG_CONFIG_HOME` 下的 Ghostty 配置目录；变量含义、默认值和职责边界见 [[XDG 基础目录与终端配置边界]]。本套主路线不额外设置该变量，按默认值使用以下配置文件：
 
 ~~~text
 ~/.config/ghostty/config.ghostty
@@ -75,7 +76,15 @@ stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
   --restow --verbose=2 ghostty
 ~~~
 
-主题名称和字体名称必须以本机实际列表为准：
+确认配置目标已经是链接后，才启动 Ghostty。随后在 Ghostty 中检查基础环境：
+
+~~~zsh
+test -L "$HOME/.config/ghostty/config.ghostty"
+printf 'shell=%s\nterm=%s\n' "$SHELL" "$TERM"
+zsh --version
+~~~
+
+正常情况下，Ghostty 中的 `TERM` 是 `xterm-ghostty`。主题名称和字体名称必须以本机实际列表为准：
 
 ~~~bash
 ghostty +list-themes
@@ -234,6 +243,7 @@ ghostty +list-themes
 ## 官方参考资料
 
 - [Ghostty：配置文件、XDG 路径与 config-file](https://ghostty.org/docs/config)
+- [Ghostty 1.0.1：首次启动创建默认配置](https://ghostty.org/docs/install/release-notes/1-0-1)
 - [Ghostty：配置项参考](https://ghostty.org/docs/config/reference)
 - [Ghostty：Shell Integration](https://ghostty.org/docs/features/shell-integration)
 - [Ghostty：SSH 集成与版本边界](https://ghostty.org/docs/features/ssh)

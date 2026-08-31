@@ -12,12 +12,15 @@ tags:
   - Atuin
   - 命令历史
 created: 2026-07-19T16:33:48
-updated: 2026-08-28T16:35:10
+updated: 2026-08-31T13:18:23
 ---
 
 Atuin 将命令、执行时间、工作目录、退出状态和耗时保存在本地数据库中，并提供比普通 Shell 历史更容易检索的界面。本方案把它作为 **local-first 的命令历史工具**：不注册账号也能完整使用，跨机器同步是后续按需启用的可选能力。
 
 本文默认已经按照 [[现代终端环境搭建概览]] 配置 Zsh。Atuin 配置源与本地数据的部署边界见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]，插件加载和跨机器文件边界见 [[Zsh 与 Antidote 跨机器配置管理]]，与 fzf 的按键分工见 [[zoxide 与 fzf 导航和模糊查找]]，升级和数据恢复见 [[现代终端环境更新、验证与回退]]。
+
+> [!tip] 何时打开本文
+> 主线已经安装 Atuin 并接入 `Ctrl-R`。只有要导入旧历史、调整过滤规则、理解本地数据与密钥，或决定是否启用同步时，才继续本文。
 
 ## 1. 先明确职责边界
 
@@ -31,95 +34,11 @@ Atuin 是独立可执行程序，不是提示符、终端模拟器或 Antidote �
 
 Atuin 导入旧历史后，原来的 Zsh 历史文件仍会继续更新。不要急于删除 `HISTFILE` 或原有历史选项；两者并存能降低迁移和回退成本。
 
-## 2. 安装 Atuin 二进制
+## 2. 在加载 Atuin 设置前部署受管配置
 
-macOS 上若使用 Homebrew：
+Atuin 不只是读取配置：当配置目录或 `config.toml` 不存在时，加载设置的命令可能创建目录并写入示例配置。因此，如果该文件准备由 Stow 管理，不能先运行 `atuin info`、`atuin doctor`、`atuin init` 或真实交互式 Zsh。
 
-~~~bash
-brew install atuin
-~~~
-
-Ubuntu 或其他 Unix 系统可以使用 Atuin 官方 release 中的二进制安装器。先下载到临时文件并阅读，再执行已经审查的本地副本：
-
-~~~bash
-atuin_installer="$(mktemp)"
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh \
-  -o "$atuin_installer"
-less "$atuin_installer"
-ATUIN_NO_MODIFY_PATH=1 sh "$atuin_installer"
-rm -f "$atuin_installer"
-~~~
-
-在 `less` 中检查来源与内容，按 `q` 返回后才继续。这里直接使用官方二进制安装器，并以 `ATUIN_NO_MODIFY_PATH=1` 禁止它自动修改 `.profile`、`.zshrc`、`.zshenv` 等文件；历史导入、同步账号、PATH 和 Shell 初始化都留到后文手工完成。安装器默认把二进制放入 `~/.atuin/bin`。若新终端仍找不到命令，应先按 [[Zsh 与 Antidote 跨机器配置管理]] 检查 PATH，而不是重复运行安装器。
-
-这是从网络取得并执行官方脚本；受管服务器应先按组织的软件来源和审计要求确认是否允许。
-
-重新打开终端后确认：
-
-~~~bash
-command -v atuin
-atuin --version
-~~~
-
-## 3. 让 Atuin 接管 Ctrl-R
-
-在 `.zshrc` 的交互式工具区使用下面这一个初始化块。若此前运行过会自动配置 Shell 的 setup 脚本，并已存在 `eval "$(atuin init zsh)"`，应将该行替换掉，而不是在其他位置再追加一次：
-
-~~~zsh
-if command -v atuin >/dev/null 2>&1; then
-  eval "$(atuin init zsh --disable-up-arrow --disable-ai)"
-fi
-~~~
-
-这里显式做了三项选择：
-
-- Atuin 保留默认的 `Ctrl-R` 历史搜索绑定。
-- `--disable-up-arrow` 让上方向键继续使用 Zsh 原生历史，不突然打开全屏搜索界面。
-- `--disable-ai` 关闭空提示符下由 `?` 触发的 Atuin AI；这套配置只把 Atuin 当作本地历史工具。
-
-fzf 的 Shell 集成必须先加载，并在加载当时禁用它的 `Ctrl-R`；随后再初始化 Atuin。完整顺序见 [[zoxide 与 fzf 导航和模糊查找]]。同一条 `atuin init` 只能出现一次。
-
-保存后检查并新开终端：
-
-~~~bash
-zsh_config_dir="$(zsh -c 'print -r -- "${ZDOTDIR:-$HOME}"')"
-zsh -n "$zsh_config_dir/.zshrc"
-exec zsh -l
-~~~
-
-## 4. 一次性导入旧历史
-
-如果仍沿用旧配置，先用实际的旧 `HISTFILE`；若已经切到本文配套的 XDG Zsh 骨架，默认旧文件通常是 `~/.zsh_history`，也可以直接使用迁移时保存的 `zsh-history` 副本。下面先显式指定并备份这个输入文件：
-
-~~~zsh
-legacy_history_file="$HOME/.zsh_history"
-if [[ ! -f "$legacy_history_file" && -f "$HOME/.zhistory" ]]; then
-  legacy_history_file="$HOME/.zhistory"
-fi
-if [[ -f "$legacy_history_file" ]]; then
-  history_backup="${legacy_history_file}.before-atuin.$(date +%Y%m%d-%H%M%S)"
-  cp -p "$legacy_history_file" "$history_backup"
-  printf 'history backup: %s\n' "$history_backup"
-fi
-~~~
-
-旧配置使用自定义路径时，应先替换 `legacy_history_file`，不要猜测。然后明确以 Zsh 格式导入同一个文件：
-
-~~~zsh
-if [[ -f "$legacy_history_file" ]]; then
-  HISTFILE="$legacy_history_file" atuin import zsh
-fi
-unset legacy_history_file
-~~~
-
-只有当前 `HISTFILE` 仍然指向旧文件时，`atuin import auto` 才能作为等价简写。现代骨架会把 `HISTFILE` 切到新的 XDG state 路径，因此迁移后应像上面一样显式指定旧文件。这是一次性迁移步骤，不应写入 `.zshrc` 或在每次启动时重复执行。
-
-导入不会替你识别所有敏感命令。若旧历史中可能含令牌、密码或连接串，应在启用远程同步前先审查和清理。
-
-## 5. 使用一套克制的本地配置
-
-Atuin 的运行时主配置通常位于 `~/.config/atuin/config.toml`。主路线在 dotfiles 的 `atuin` package 中创建配置源，并让 GNU Stow 部署到这个默认路径：
+主线已经完成这一顺序；单独新增 Atuin 软件包时，在仓库中创建或编辑配置源：
 
 ~~~bash
 DOTFILES_DIR="$HOME/.dotfiles"
@@ -127,7 +46,6 @@ atuin_source="$DOTFILES_DIR/atuin/.config/atuin/config.toml"
 
 git -C "$DOTFILES_DIR" status --short --branch
 mkdir -p "${atuin_source%/*}" "$HOME/.config/atuin"
-touch "$atuin_source"
 ~~~
 
 将下面的最小配置保存到 `$DOTFILES_DIR/atuin/.config/atuin/config.toml`：
@@ -157,7 +75,7 @@ history_filter = [
 # cwd_filter = ["^/absolute/path/to/private-workspace"]
 ~~~
 
-保存后先模拟再部署。已有 `~/.config/atuin/config.toml` 时先备份、比较并检查其中是否含真实私有路径；不要直接覆盖：
+已有 `~/.config/atuin/config.toml` 时先停止并判断它的来源：若是普通文件，先在仓库外备份、检查私有路径并与配置源比较，不直接覆盖，也不使用 `stow --adopt`。确认目标可由新源接管后，先模拟再部署：
 
 ~~~bash
 DOTFILES_DIR="$HOME/.dotfiles"
@@ -166,13 +84,16 @@ stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
   --simulate --restow --verbose=2 atuin
 ~~~
 
-确认模拟输出没有 conflict 且只涉及 Atuin 配置后，再实际部署：
+确认模拟输出没有 conflict 且只涉及 Atuin 配置后，再实际部署并验证所有权：
 
 ~~~bash
 DOTFILES_DIR="$HOME/.dotfiles"
 
 stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
   --restow --verbose=2 atuin
+
+test -L "$HOME/.config/atuin/config.toml"
+readlink "$HOME/.config/atuin/config.toml"
 ~~~
 
 `history_filter` 和 `cwd_filter` 是正则表达式，默认可在字符串任意位置匹配；需要匹配命令开头或结尾时，应显式使用 `^` 或 `$`。不要直接复制过于宽泛的规则，否则正常历史也会被排除。
@@ -181,6 +102,92 @@ Atuin 也遵守“命令前加空格则不记入历史”的惯例，但这只�
 
 > [!warning] 过滤规则不会自动清除旧记录
 > 新增过滤规则只影响后续记录。`atuin history prune` 会依据当前过滤规则删除既有历史，属于数据删除操作；先确认私有备份和规则范围，再单独执行，不要把它写进启动脚本。
+
+## 3. 确认当前二进制与数据位置
+
+配置目标已经由 Stow 占位后，才运行会加载设置的检查：
+
+~~~bash
+command -v atuin
+atuin --version
+atuin info
+~~~
+
+若命令缺失，回到当前平台主线检查原安装来源与 PATH，不要重复运行安装器。`atuin info` 用于核对当前配置、数据库与密钥的实际位置；XDG 默认目录只是默认值，备份和恢复必须以当前输出为准。运行后再次确认 `config.toml` 仍是指向 dotfiles 的链接，而数据库、密钥和 session 位于仓库外。
+
+## 4. 让 Atuin 接管 Ctrl-R
+
+在 `.zshrc` 的交互式工具区使用下面这一个初始化块。若此前运行过会自动配置 Shell 的 setup 脚本，并已存在 `eval "$(atuin init zsh)"`，应将该行替换掉，而不是在其他位置再追加一次：
+
+~~~zsh
+if command -v atuin >/dev/null 2>&1; then
+  eval "$(atuin init zsh --disable-up-arrow --disable-ai)"
+fi
+~~~
+
+这里显式做了三项选择：
+
+- Atuin 保留默认的 `Ctrl-R` 历史搜索绑定。
+- `--disable-up-arrow` 让上方向键继续使用 Zsh 原生历史，不突然打开全屏搜索界面。
+- `--disable-ai` 关闭空提示符下由 `?` 触发的 Atuin AI；这套配置只把 Atuin 当作本地历史工具。
+
+fzf 的 Shell 集成必须先加载，并在加载当时禁用它的 `Ctrl-R`；随后再初始化 Atuin。完整顺序见 [[zoxide 与 fzf 导航和模糊查找]]。同一条 `atuin init` 只能出现一次。
+
+保存后检查并新开终端：
+
+~~~bash
+zsh_config_dir="$(zsh -c 'print -r -- "${ZDOTDIR:-$HOME}"')"
+zsh -n "$zsh_config_dir/.zshrc"
+exec zsh -l
+~~~
+
+## 5. 只从人工脱敏副本导入一次
+
+先确认旧历史的真实来源。当前仍是旧 Zsh 时，先把内存中的新记录追加到当前历史文件；已经切换到 XDG state 时，则使用迁移主线保存的私密历史副本：
+
+~~~zsh
+current_history_file="${HISTFILE:-$HOME/.zsh_history}"
+if [[ -n "${ZSH_VERSION:-}" && -n "$current_history_file" ]]; then
+  fc -AI "$current_history_file"
+fi
+
+printf 'old or backed-up Zsh history path: '
+IFS= read -r legacy_history_file
+
+if [[ ! -f "$legacy_history_file" ]]; then
+  print -u2 "STOP: history file does not exist: $legacy_history_file"
+  false
+fi
+unset current_history_file
+~~~
+
+输入应来自迁移主线实际打印的备份路径或旧配置记录，不要猜测。接下来创建权限收紧的工作副本；原始历史保持不变：
+
+~~~zsh
+previous_umask=$(umask)
+umask 077
+
+history_work_dir="$HOME/terminal-backups/atuin-import-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$history_work_dir"
+sanitized_history="$history_work_dir/zsh-history.sanitized"
+cp -p "$legacy_history_file" "$sanitized_history"
+chmod 600 "$sanitized_history"
+
+umask "$previous_umask"
+unset previous_umask
+printf 'review and redact: %s\n' "$sanitized_history"
+~~~
+
+用编辑器逐行删除令牌、密码、连接串、内部主机名和其他不应进入 Atuin 的命令。确认副本已经脱敏后，才明确使用 Zsh 解析器导入：
+
+~~~zsh
+less "$sanitized_history"
+HISTFILE="$sanitized_history" atuin import zsh
+atuin stats
+unset legacy_history_file sanitized_history
+~~~
+
+`atuin import auto` 会根据当前 Shell 和当前历史路径推断输入；切换到新 XDG 历史后，它可能读错文件，因此迁移场景使用显式 `import zsh`。导入不会删除原文件，也不会替你识别全部秘密；这是一次性操作，不能放入 `.zshrc` 或重复执行。
 
 ## 6. 日常搜索
 
@@ -268,4 +275,5 @@ Atuin 默认把数据库、密钥和 session 放在 `~/.local/share/atuin`，除
 - [Atuin：配置、过滤与数据路径](https://docs.atuin.sh/cli/configuration/config/)
 - [Atuin：可选同步与密钥边界](https://docs.atuin.sh/cli/guide/sync/)
 - [Atuin：doctor 命令](https://docs.atuin.sh/cli/reference/doctor/)
+- [Atuin：设置加载与缺失配置创建逻辑](https://github.com/atuinsh/atuin/blob/main/crates/atuin-client/src/settings.rs#L1465-L1533)
 - [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)

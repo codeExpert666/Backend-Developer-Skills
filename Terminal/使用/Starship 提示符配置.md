@@ -11,48 +11,24 @@ tags:
   - Starship
   - Zsh
 created: 2026-07-19T16:35:26
-updated: 2026-08-28T16:35:10
+updated: 2026-08-31T13:18:23
 ---
 
 Starship 是独立的跨 Shell 提示符程序，只负责根据当前目录、Git 仓库和项目文件渲染 prompt。它不提供 Zsh 插件管理、命令历史、目录数据库、模糊查找或终端主题；这些职责分别属于 Antidote、Atuin、zoxide、fzf 和 Ghostty。完整分层见 [[现代终端环境搭建概览]]，配置源与默认路径的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
 
-## 1. 安装 Starship
+> [!tip] 何时打开本文
+> 平台主线已经安装并初始化 Starship。只有要定制提示符内容、控制字体依赖或排查大型仓库性能时，才继续本文。
 
-macOS 使用 Homebrew：
+## 1. 确认当前二进制与初始化入口
 
-~~~bash
-brew install starship
-~~~
-
-Ubuntu 25.04 及以上可使用发行版仓库：
+安装命令只在场景主线维护：[[macOS 从零搭建现代终端环境]]、[[Ubuntu 从零搭建现代终端环境]]、[[从已有 dotfiles 恢复现代终端环境]]。本专题从二进制已经可见开始：
 
 ~~~bash
-sudo apt update
-sudo apt install starship
-~~~
-
-较旧 Ubuntu 若仓库没有 `starship`，可使用官方安装脚本或官方 Release 二进制。先把官方脚本下载到临时文件，审阅后再执行：
-
-~~~bash
-mkdir -p "$HOME/.local/bin"
-starship_installer="$(mktemp)"
-curl --fail --silent --show-error --location \
-  https://starship.rs/install.sh \
-  --output "$starship_installer"
-less "$starship_installer"
-sh "$starship_installer" -b "$HOME/.local/bin"
-rm -f -- "$starship_installer"
-unset starship_installer
-~~~
-
-这里安装到已经纳入本方案最小 PATH 的 `~/.local/bin`，不要求写入系统目录。在受管或生产环境中，应由管理员决定实际安装目录；审阅未通过时不要执行后续 `sh`。不要从不明镜像复制二进制。平台完整安装流程见 [[macOS 从零搭建现代终端环境]] 与 [[Ubuntu 从零搭建现代终端环境]]。
-
-安装后确认二进制可见：
-
-~~~bash
-starship --version
 command -v starship
+starship --version
 ~~~
+
+若命令缺失，回到当前平台主线检查原安装来源与 PATH，不要在专题中叠加第二种安装方式。
 
 ## 2. 在 Zsh 中只初始化一次
 
@@ -65,6 +41,8 @@ fi
 ~~~
 
 在本文推荐的组合中，Starship 位于 fzf、Atuin、zoxide 之后；`zsh-syntax-highlighting` 仍需在 `.zshrc` 真正最后加载。完整顺序见 [[Zsh 与 Antidote 跨机器配置管理]]。
+
+把初始化块写进仓库源不会立即执行它。若准备由 Stow 管理 `starship.toml`，先完成第 3、4 节的配置源和部署，再运行 `starship explain`、`exec zsh -l` 或任何完整交互式 Zsh；这样所有受管配置在行为验证前已经拥有明确链接。
 
 从 Oh My Zsh 迁移时，必须移除或禁用原有的 `ZSH_THEME`，也不要再初始化 Powerlevel10k、Pure 等第二套 prompt。多个提示符同时修改 `PROMPT`、`RPROMPT` 和 precmd hook，会产生覆盖、闪烁或重复内容。
 
@@ -178,6 +156,9 @@ DOTFILES_DIR="$HOME/.dotfiles"
 
 stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
   --restow --verbose=2 starship
+
+test -L "$HOME/.config/starship.toml"
+readlink "$HOME/.config/starship.toml"
 ~~~
 
 这套配置有三个刻意的取舍：

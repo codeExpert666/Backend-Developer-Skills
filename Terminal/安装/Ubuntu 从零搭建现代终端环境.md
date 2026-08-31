@@ -12,160 +12,87 @@ tags:
   - Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-08-30T21:03:27
+updated: 2026-08-31T13:56:20
 ---
 
-本文在 Ubuntu 上搭建 Zsh + Antidote + Starship + Atuin + zoxide + fzf，并说明 Ubuntu Desktop 与远程 Ubuntu Server 对 Ghostty 的不同处理。可复用配置进入普通 Git dotfiles 仓库，由 GNU Stow 部署到 `$HOME`；配置目录和加载顺序与 [[macOS 从零搭建现代终端环境]] 保持一致，便于跨机器维护和恢复。
+本文从一台以 Bash 为起点的 Ubuntu 出发，完成 Zsh + Antidote + Starship + Atuin + zoxide + fzf 的安装，同时筛选旧 Bash 配置、从零建立 dotfiles、部署并形成已知良好提交。单看本文即可完成本地或 SSH 主流程。
 
-请先阅读 [[现代终端环境搭建概览]] 和 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。已有 Oh My Zsh 的机器应改走 [[从 Oh My Zsh 迁移到 Antidote]]；生产服务器、共享跳板机和受管主机还应先确认软件安装、个人 dotfiles 和登录 Shell 变更策略。
+已有 Oh My Zsh 时改走 [[从 Oh My Zsh 迁移到 Antidote]]；已有可信远端 dotfiles 时改走 [[从已有 dotfiles 恢复现代终端环境]]。生产服务器、共享跳板机和受管主机还必须先确认组织是否允许安装个人软件、部署 dotfiles 和修改登录 Shell。
 
 > [!info] 易变安装事实核对范围
-> 本文于 2026-08-30 重新核对 Ghostty Linux 包来源、fzf 的 Zsh 集成、zoxide 的最低 fzf 版本，以及 Atuin release 安装器的 PATH 修改开关。该状态只表示官方资料已核对，不表示任何具体 Ubuntu 主机已经执行或验证本文命令。
+> 本文于 2026-08-30 核对了 Ghostty Linux 包来源、fzf 的 Zsh 集成、zoxide 的 fzf 版本要求，以及 Atuin release 安装器的 PATH 修改开关。这只表示资料已核对，不表示任何具体 Ubuntu 主机已经执行本文命令。
 
 ## Desktop 与 Server 的边界
 
-先确认自己正在配置哪一类机器：
-
-| 场景 | Ghostty | 命令行工具 |
+| 场景 | Ghostty | Zsh 与命令行工具 |
 | --- | --- | --- |
-| Ubuntu Desktop 本地开发 | 可在本机安装 Ghostty | 在同一台机器安装 Zsh、Antidote、Starship、Atuin、zoxide、fzf |
-| Mac 或其他桌面设备 SSH 到 Ubuntu Server | Ghostty 只装在本地桌面 | 在 Server 安装需要的命令行部分 |
-| 无图形桌面的 Ubuntu Server | 不安装 Ghostty | 安装 Zsh 与所需 CLI，重点验证 SSH 新会话 |
-| 容器或一次性 CI 环境 | 通常不安装 Ghostty，也不修改登录 Shell | 只按任务需要安装命令，不复制完整交互配置 |
+| Ubuntu Desktop 本地开发 | 可选装在本机 | 安装在同一台机器 |
+| Mac 等桌面设备 SSH 到 Ubuntu Server | 只装在本地桌面 | 安装在 Ubuntu Server |
+| 无图形桌面的 Ubuntu Server | 不安装 | 安装并重点验证 SSH 新会话 |
+| 容器或一次性 CI | 不安装，也通常不改登录 Shell | 只安装任务需要的命令 |
 
-> [!important] Ghostty 不跟随 SSH 安装到远端
-> Ghostty 提供本地窗口、键盘输入与终端协议。通过 Mac 上的 Ghostty SSH 到 Ubuntu 时，远端只运行 Shell 和命令行工具；在 Ubuntu Server 上安装图形终端不会改善本地窗口体验。
+Ghostty 提供本地窗口、键盘输入和终端协议。通过 Ghostty SSH 到服务器时，远端只运行 Shell 和 CLI，不需要再安装图形终端。
 
-## 1. 确认 Bash 起点、账户登录 Shell 与当前进程
+## 1. 确认 Bash 起点与三个 Shell 状态
 
-全新 Ubuntu 普通用户通常从 Bash 开始，本文的目标是在保留回退入口的前提下，把后续新登录切换到 Zsh，而不是同时维护两套交互配置。切换前标记为 `bash` 的命令可以直接在当前 Bash 会话执行；标记为 `zsh` 的内容用于 Zsh 配置文件或明确启动的 Zsh 进程。
+在当前 Bash 会话执行只读检查：
 
-先执行只读检查：
-
-~~~bash
-account_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
+```bash
+account_shell=$(getent passwd "$(id -un)" | cut -d: -f7)
 printf 'account login shell: %s\n' "$account_shell"
-printf 'session SHELL variable: %s\n' "$SHELL"
-ps -p $$ -o pid=,comm=
+printf 'inherited SHELL: %s\n' "${SHELL-}"
+ps -p $$ -o pid=,ppid=,comm=,args=
+
 printf 'XDG_CONFIG_HOME: %s\n' "${XDG_CONFIG_HOME:-not set}"
 printf 'ZDOTDIR: %s\n' "${ZDOTDIR:-not set}"
 printf 'HISTFILE: %s\n' "${HISTFILE:-not set}"
+printf 'SSH connection: %s\n' "${SSH_CONNECTION:-local session}"
+
 command -v bash
 bash --version | head -n 1
 command -v zsh || true
-zsh --version 2>/dev/null || true
 cat /etc/os-release
 uname -m
-printf 'SSH connection: %s\n' "${SSH_CONNECTION:-local session}"
 unset account_shell
-~~~
+```
 
-账户数据库中的登录 Shell、当前会话继承的 `$SHELL` 和正在解释命令的进程不是同一个概念：`getent passwd` 的末字段表示账户下次登录应启动什么，`$SHELL` 是当前会话继承的环境变量，`ps` 显示此刻的 Shell 进程。刚执行 `chsh` 后，旧会话中的后两者不会自动变成 Zsh，必须用新终端或新 SSH 登录验证。
+`getent passwd` 的末字段、继承的 `$SHELL` 和 `ps` 显示的当前进程是三个不同状态。本文直到新配置通过真实启动测试后才执行 `chsh`。
 
-当前环境变量没有设置，不代表启动文件中没有自定义路径：Bash 可能没有读取 Zsh 的启动文件，未导出的变量也不会出现在当前环境。备份前再只读检查常见入口中是否显式设置了 `XDG_CONFIG_HOME`、`ZDOTDIR` 或 `HISTFILE`：
+检查已存在的路径：
 
-~~~bash
-for startup_file in \
-  "$HOME/.profile" \
-  "$HOME/.bash_profile" \
-  "$HOME/.bash_login" \
-  "$HOME/.bashrc" \
-  "$HOME/.zshenv" \
-  "$HOME/.zprofile" \
-  "$HOME/.zshrc"
-do
-  [ -f "$startup_file" ] || continue
-  printf '\n[%s]\n' "$startup_file"
-  grep -nE '(^|[[:space:]])(export[[:space:]]+)?(XDG_CONFIG_HOME|ZDOTDIR|HISTFILE)=' \
-    "$startup_file" || true
-done
-unset startup_file
-~~~
-
-如果这里发现配置或历史实际位于其他目录，应先确认那个目录的职责，再把明确的文件加入下一节备份清单；不要因为变量指向一个上层目录就递归复制整个 `$HOME`。
-
-若账户登录 Shell 与当前进程都是 Bash，这是本文预期的常见起点；若已经是 Zsh，仍应继续备份两类配置，避免遗漏以前使用 Bash 时留下的环境设置。若输出为其他 Shell、为空或与组织账户策略不符，应先查明账户来源和登录方式，不要直接执行后面的 `chsh`。
-
-如果当前是唯一的远程管理会话，先再打开一个 SSH 窗口并保持登录。后续任何配置错误都应能从备用会话恢复；不要在尚未测试新登录的情况下退出全部连接。
-
-## 2. 建立并验证私密恢复基线
-
-这份备份用于比较和回退，不是 dotfiles 配置源，也不等于已经完成 Bash 到 Zsh 的迁移。以下命令先把当前 Bash 会话尚未写入文件的历史追加到其原历史文件，再分别复制存在的 Bash、Zsh 配置和历史。备份可能包含主机名、代理、内部路径或敏感命令，因此先用 `umask 077` 收紧新建目录和清单的权限，并在完成后恢复原来的 umask。
-
-如果第 1 节发现了非默认配置目录或历史文件，应先把经过确认的具体路径同时加入下面的复制清单和验证清单。不要把不明确的上层目录直接加入递归复制。
-
-~~~bash
-backup_dir="$HOME/.terminal-backups/$(date +%Y%m%d-%H%M%S)"
-previous_umask="$(umask)"
-umask 077
-mkdir -p "$backup_dir"
-printf '%s\n' "$previous_umask" > "$backup_dir/umask-before.txt"
-
-for file in \
+```bash
+for candidate_path in \
+  "$HOME/.dotfiles" \
   "$HOME/.profile" \
   "$HOME/.bash_profile" \
   "$HOME/.bash_login" \
   "$HOME/.bashrc" \
   "$HOME/.bash_aliases" \
-  "$HOME/.bash_logout" \
-  "$HOME/.inputrc" \
   "$HOME/.zshenv" \
   "$HOME/.zprofile" \
-  "$HOME/.zshrc"
-do
-  [ -f "$file" ] && cp -p "$file" "$backup_dir/"
+  "$HOME/.zshrc" \
+  "$HOME/.config/zsh"; do
+  if [ -e "$candidate_path" ] || [ -L "$candidate_path" ]; then
+    ls -ld "$candidate_path"
+  fi
 done
+```
 
-for directory in "$HOME/.config/zsh" "$HOME/.config/ghostty" "$HOME/.config/atuin"; do
-  [ -d "$directory" ] && cp -R "$directory" "$backup_dir/"
-done
+若 `$HOME/.dotfiles` 已存在，本文的“从零”前提不成立。先检查 Git 根、状态和远端，不要重新 `git init` 或覆盖。若这是唯一远程管理会话，再打开一个 SSH 窗口并保持登录，作为恢复入口。
 
-account_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
-printf '%s\n' "$account_shell" > "$backup_dir/login-shell-before.txt"
+## 2. 建立并验证私密恢复基线
 
-bash_history_file="$HOME/.bash_history"
-if [ -n "${BASH_VERSION:-}" ]; then
-  history -a
-  bash_history_file="${HISTFILE:-$HOME/.bash_history}"
-fi
-if [ -f "$bash_history_file" ]; then
-  cp -p "$bash_history_file" "$backup_dir/bash-history"
-  printf '%s\n' "$bash_history_file" > "$backup_dir/bash-history-source.txt"
-fi
+这份基线保留原始 Bash、旧 Zsh、历史和登录 Shell 状态，不是 dotfiles 配置源。当前确实是 Bash 时，先用 `history -a` 把本会话尚未落盘的历史追加到 Bash 历史文件：
 
-zsh_history_file=""
-if [ -n "${ZSH_VERSION:-}" ] && [ -n "${HISTFILE:-}" ]; then
-  zsh_history_file="$HISTFILE"
-elif [ -f "$HOME/.zhistory" ]; then
-  zsh_history_file="$HOME/.zhistory"
-elif [ -f "$HOME/.zsh_history" ]; then
-  zsh_history_file="$HOME/.zsh_history"
-fi
-if [ -n "$zsh_history_file" ] && [ -f "$zsh_history_file" ]; then
-  cp -p "$zsh_history_file" "$backup_dir/zsh-history"
-  printf '%s\n' "$zsh_history_file" > "$backup_dir/zsh-history-source.txt"
-fi
+```bash
+previous_umask=$(umask)
+umask 077
 
-umask "$previous_umask"
-printf 'backup created: %s\n' "$backup_dir"
-unset account_shell bash_history_file previous_umask zsh_history_file
-~~~
+backup_dir="$HOME/terminal-backups/ubuntu-before-zsh-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$backup_dir"
+printf '%s\n' "$previous_umask" > "$backup_dir/umask-before.txt"
 
-`history -a` 只在当前进程确实是 Bash 时执行，用于把本会话新增命令追加到 Bash 的 `$HISTFILE`；它不会把 Bash 历史转换为 Zsh 格式。若当前不是 Bash，则只复制默认的 `~/.bash_history`（如果存在）。Zsh 历史只在当前进程确实是 Zsh 时采用其 `$HISTFILE`，否则按常见文件名寻找，避免把 Bash 的 `$HISTFILE` 错记成 Zsh 历史。
-
-最后一行出现 `backup created` 只说明命令运行到了打印位置，不能证明此前每次复制都成功。继续之前必须验证目录权限、登录 Shell 记录、原始配置副本、历史副本和 umask 恢复状态：
-
-~~~bash
-backup_verified=1
-
-[ -d "$backup_dir" ] || backup_verified=0
-[ "$(stat -c '%a' "$backup_dir" 2>/dev/null)" = 700 ] || backup_verified=0
-grep -q '[^[:space:]]' "$backup_dir/login-shell-before.txt" 2>/dev/null \
-  || backup_verified=0
-[ "$(umask)" = "$(cat "$backup_dir/umask-before.txt" 2>/dev/null)" ] \
-  || backup_verified=0
-
-for original_path in \
+for source_path in \
   "$HOME/.profile" \
   "$HOME/.bash_profile" \
   "$HOME/.bash_login" \
@@ -177,102 +104,93 @@ for original_path in \
   "$HOME/.zprofile" \
   "$HOME/.zshrc" \
   "$HOME/.config/zsh" \
-  "$HOME/.config/ghostty" \
-  "$HOME/.config/atuin"
-do
-  if [ -e "$original_path" ] \
-    && [ ! -e "$backup_dir/${original_path##*/}" ]; then
-    printf 'missing backup copy: %s\n' "$original_path" >&2
-    backup_verified=0
+  "$HOME/.config/atuin" \
+  "$HOME/.config/starship.toml"; do
+  if [ -e "$source_path" ] || [ -L "$source_path" ]; then
+    cp -a "$source_path" "$backup_dir/"
   fi
 done
 
-if [ -s "$backup_dir/bash-history-source.txt" ] \
-  && [ ! -f "$backup_dir/bash-history" ]; then
-  printf 'missing Bash history backup\n' >&2
-  backup_verified=0
+getent passwd "$(id -un)" | cut -d: -f7 > "$backup_dir/login-shell-before.txt"
+
+bash_history_file="$HOME/.bash_history"
+if [ -n "${BASH_VERSION:-}" ]; then
+  history -a
+  bash_history_file="${HISTFILE:-$HOME/.bash_history}"
 fi
-if [ -s "$backup_dir/zsh-history-source.txt" ] \
-  && [ ! -f "$backup_dir/zsh-history" ]; then
-  printf 'missing Zsh history backup\n' >&2
-  backup_verified=0
+if [ -f "$bash_history_file" ]; then
+  cp -p "$bash_history_file" "$backup_dir/bash-history"
+  printf '%s\n' "$bash_history_file" > "$backup_dir/bash-history-source.txt"
 fi
 
-if [ "$backup_verified" -eq 1 ]; then
-  printf 'backup verified: %s\n' "$backup_dir"
-  unset backup_verified original_path
-else
-  printf 'STOP: backup verification failed; do not continue the migration\n' >&2
+if [ -f "$HOME/.zsh_history" ]; then
+  cp -p "$HOME/.zsh_history" "$backup_dir/zsh-history"
+elif [ -f "$HOME/.zhistory" ]; then
+  cp -p "$HOME/.zhistory" "$backup_dir/zsh-history"
+fi
+
+umask "$previous_umask"
+printf 'backup=%s\n' "$backup_dir"
+unset bash_history_file previous_umask source_path
+```
+
+不要只相信最后一行。验证权限、登录 Shell 记录、预期副本和 umask：
+
+```bash
+backup_verified=1
+
+test -d "$backup_dir" || backup_verified=0
+test "$(stat -c '%a' "$backup_dir")" = 700 || backup_verified=0
+grep -q '[^[:space:]]' "$backup_dir/login-shell-before.txt" || backup_verified=0
+test "$(umask)" = "$(cat "$backup_dir/umask-before.txt")" || backup_verified=0
+
+for original_path in \
+  "$HOME/.profile" \
+  "$HOME/.bashrc" \
+  "$HOME/.bash_aliases" \
+  "$HOME/.zshenv" \
+  "$HOME/.zshrc" \
+  "$HOME/.config/zsh" \
+  "$HOME/.config/atuin" \
+  "$HOME/.config/starship.toml"; do
+  if [ -e "$original_path" ] || [ -L "$original_path" ]; then
+    if [ ! -e "$backup_dir/${original_path##*/}" ] \
+      && [ ! -L "$backup_dir/${original_path##*/}" ]; then
+      printf 'missing backup: %s\n' "$original_path" >&2
+      backup_verified=0
+    fi
+  fi
+done
+
+if [ "$backup_verified" -ne 1 ]; then
+  printf 'STOP: backup verification failed\n' >&2
   false
 fi
-~~~
 
-记录通过验证的 `backup_dir`。启用 `ZDOTDIR` 后，原来的 `~/.zshrc` 会暂时不被读取，但先不要删除它；Bash 启动文件也应保留，供显式启动 Bash、比较迁移内容和回退使用。
+printf 'backup verified: %s\n' "$backup_dir"
+unset backup_verified original_path
+```
 
-备份目录必须留在 dotfiles 仓库之外：不要在其中执行 `git init`，也不要把历史、代理、令牌或机器私有配置复制进稍后建立的仓库。只有看到 `backup verified`，才进入下一节安装基础依赖。
+备份可能含令牌、内部主机名和敏感命令，必须留在 dotfiles 之外。Bash 启动文件暂时也不删除，供显式启动 Bash和回退使用。
 
-## 3. 安装系统基础依赖
+## 3. 安装系统依赖与独立工具
 
-通过 APT 安装 Zsh、Git、GNU Stow、curl、证书和后文审阅安装脚本所需的 `less`：
+先安装基础依赖：
 
-~~~bash
+```bash
 sudo apt update
 sudo apt install -y zsh git stow curl ca-certificates less
-~~~
 
-确认路径和版本：
-
-~~~bash
 command -v zsh
 zsh --version
 git --version
 stow --version
 curl --version
-~~~
+```
 
-## 4. 建立或接入 dotfiles Git 工作区
+Ubuntu LTS 中的 fzf 可能不能满足 `fzf --zsh` 与 zoxide 交互选择的版本要求。主线按 fzf 官方 Git 方式安装到用户目录，并禁止安装器修改 Shell 配置：
 
-第 2 节的私密备份已经提供原始配置回退；从这一节开始，dotfiles 仓库才负责保存经过筛选、能够跨机器复用的配置源。根据实际状态只选择一条路径：
-
-1. 第一次建立 dotfiles：执行 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#4. 初始化普通仓库与 package 目录|初始化普通仓库]]，目前只创建仓库根目录和 README，不预建空 package；
-2. 已经有可信远端：按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#11. 在新机器恢复|新机器恢复流程]]完成 clone 和 Git 现场检查，但暂不执行 Stow 部署，部署留到第 9 节；
-3. `DOTFILES_DIR` 已经存在但来源不明：只读检查目录、Git 根和远端，停止后查清所有者；不得删除、覆盖或重新 `git init`。
-
-本文继续用 `$HOME/.dotfiles` 作为示例；若选择了其他位置，只修改 `DOTFILES_DIR`。完成所选路径后统一验证：
-
-~~~bash
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
-
-git -C "$DOTFILES_DIR" status --short --branch
-git -C "$DOTFILES_DIR" rev-parse --show-toplevel
-git -C "$DOTFILES_DIR" branch --show-current
-git -C "$DOTFILES_DIR" remote -v
-~~~
-
-刚执行 `git init` 的仓库没有远端时，`git remote -v` 没有输出是正常现象。建立 Git 工作区也不等于已经形成可回退版本：第一个“已知良好”提交必须等配置完成真实登录与 SSH 验收后再创建。无论仓库是否私有，都不能把第 2 节的原始备份或命令历史复制进来。
-
-## 5. 形成迁移清单与配置落点
-
-在仓库已经有明确根目录后，再逐项阅读 `.profile`、`.bash_profile`、`.bash_login`、`.bashrc` 和 `.bash_aliases`。先按读取时机区分登录、交互和非交互 Shell，再按跨平台、Linux 专属和机器私有确定落点：
-
-- 登录 Shell 所需且可共享的 PATH、SDK 和环境变量写入 `.zprofile`；仅适用于 Linux 的共享登录逻辑在 `.zprofile` 内做平台判断，机器私有或含敏感信息的登录环境写入不入库的 `local.zprofile`；
-- 只在交互 Shell 中需要的别名、函数和工具初始化按作用范围拆分：跨平台内容进入 `common.zsh`，Linux 专属内容进入 `linux.zsh`，机器私有内容进入 `local.zsh`；
-- Bash 的 `shopt`、`PROMPT_COMMAND`、Readline 按键和其他专属语法不直接复制，也不从 `.zshrc` 整体 `source ~/.bashrc`；
-- `.profile` 还可能被桌面会话或其他登录路径使用，完成 Zsh 验证不代表可以删除它。
-
-本节只形成“保留、改写、放入哪个文件或不迁移”的清单，不直接改写当前生效配置。可共享内容在第 7 节写入仓库源；机器私有内容在第 9 节 Stow 部署后写入真实 `local` 文件。只有每一项需要保留的能力都在新 Zsh 会话中验证，才算完成迁移。
-
-后文主路线采用未设置 `XDG_CONFIG_HOME` 时的默认 `~/.config`，并让 `ZDOTDIR` 指向 `~/.config/zsh`。如果第 1 节发现当前机器使用其他路径，应先按 [[现代终端环境搭建概览#先理解 XDG 基础目录规范|XDG 与 ZDOTDIR 目录模型]]决定是迁回默认布局，还是一致调整仓库源、Stow 目标和全部验证路径；不能把两套布局混用后继续照抄命令。
-
-## 6. 安装独立命令行组件与 Antidote
-
-Ubuntu 版本之间的软件仓库差异较大。下面先安装 fzf，再从各项目官方地址下载安装器；下载的脚本先保存到临时文件并阅读，不让安装器接管 Shell 配置。
-
-### fzf
-
-Ubuntu LTS 中的 fzf 可能落后于上游版本。本文的初始化方式需要 `fzf --zsh`，zoxide 当前还要求 fzf 至少为 0.51.0 才能稳定使用交互选择。为避免先装旧包、再用另一份二进制覆盖，主路线直接按 fzf 官方 Git 方式安装到用户目录，并禁止安装器修改 Shell 配置：
-
-~~~bash
+```bash
 fzf_root="${XDG_DATA_HOME:-$HOME/.local/share}"
 fzf_dir="$fzf_root/fzf"
 mkdir -p "$fzf_root"
@@ -285,66 +203,41 @@ fi
 export PATH="$fzf_dir/bin:$PATH"
 fzf --version
 fzf --zsh >/dev/null
-~~~
+```
 
-此方式把官方发布的 fzf 二进制放在 `~/.local/share/fzf/bin`；稍后的 `.zshenv` 会让它优先于旧的系统包。若 Git 目录已经存在，日后应先 `git -C "$fzf_dir" pull --ff-only`，再重新执行 `install --bin`。
+若 `apt-cache policy fzf` 显示受信任仓库的候选版本满足当前 zoxide 和 `fzf --zsh` 的要求，也可以只使用 APT；同一台机器不要并存两个不清楚优先级的来源。
 
-若 `apt-cache policy fzf` 显示当前受信任仓库的候选版本已经不低于 `0.51.0`，也可以改用 `sudo apt install fzf` 并跳过整个 Git 安装块。同一台机器只保留一种来源；安装后仍须确认 `fzf --zsh` 成功。
+下载 Starship、Atuin 和 zoxide 的官方安装脚本时，先保存到临时文件并阅读。`less` 中按 `q` 退出：
 
-### Starship
-
-~~~bash
+```bash
 mkdir -p "$HOME/.local/bin"
-installer="$(mktemp)"
+
+installer=$(mktemp)
 curl -fsSL https://starship.rs/install.sh -o "$installer"
 less "$installer"
 sh "$installer" -b "$HOME/.local/bin"
 rm -f "$installer"
-~~~
 
-### Atuin
-
-Atuin 的完整 setup 脚本会自动修改多个 Shell 配置。本文要手工控制 `.zshrc` 的唯一初始化位置，因此只运行 Atuin 官方 release 中的二进制安装器：
-
-~~~bash
-installer="$(mktemp)"
+installer=$(mktemp)
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh \
   -o "$installer"
 less "$installer"
 ATUIN_NO_MODIFY_PATH=1 sh "$installer"
 rm -f "$installer"
-~~~
 
-release 安装器默认也会尝试把 `~/.atuin/bin` 写入多个 Shell profile。这里使用其官方的 `ATUIN_NO_MODIFY_PATH=1` 开关禁止自动改写；PATH 统一由后文受版本控制的 `~/.zshenv` 管理。
-
-### zoxide
-
-~~~bash
-installer="$(mktemp)"
+installer=$(mktemp)
 curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh -o "$installer"
 less "$installer"
 sh "$installer"
 rm -f "$installer"
-~~~
+```
 
-`less` 中按 `q` 退出。为当前会话临时补上用户二进制路径并验证：
+`ATUIN_NO_MODIFY_PATH=1` 阻止安装器改写多个 Shell profile；PATH 由稍后的 dotfiles 统一维护。
 
-~~~bash
-export PATH="$HOME/.local/bin:$HOME/.atuin/bin:$HOME/.local/share/fzf/bin:$PATH"
-starship --version
-atuin --version
-zoxide --version
-fzf --version
-~~~
+安装 Antidote 到 XDG 数据目录：
 
-这些都是独立二进制，不由 Antidote 更新。若你的 Ubuntu 版本已在受信任的软件仓库提供合适版本，也可改用对应包管理器，但同一个工具只保留一种安装来源。
-
-### Antidote
-
-将 Antidote 从官方 Git 仓库安装到与 macOS 相同的 XDG 数据目录：
-
-~~~bash
+```bash
 antidote_root="${XDG_DATA_HOME:-$HOME/.local/share}"
 antidote_dir="$antidote_root/antidote"
 mkdir -p "$antidote_root"
@@ -354,46 +247,85 @@ if [ ! -d "$antidote_dir/.git" ]; then
 fi
 
 test -r "$antidote_dir/antidote.zsh"
-~~~
+```
 
-末行的 `test -r` 用退出状态确认 Antidote 入口文件对当前用户可读，条件命令见 [[Shell 脚本阅读基础#6. 使用 test 表达条件|test 条件判断]]。
+当前 Bash 临时补上用户路径并验证；持久路径随后写入 `.zshenv`：
 
-不要把 Antidote 安装目录、插件缓存或生成的 `.zsh_plugins.zsh` 提交到配置仓库。跨机器只同步 Zsh 配置、插件清单和可选 snapshot。
+```bash
+export PATH="$HOME/.local/bin:$HOME/.atuin/bin:$HOME/.local/share/fzf/bin:$PATH"
 
-## 7. 建立 `zsh` package 并写入迁移配置
+starship --version
+atuin --version
+zoxide --version
+fzf --version
+```
 
-第 4 节已经建立或接入 dotfiles 工作区。先确认仓库状态，并检查 `zsh` package 是否已经由远端或以前的配置提供：
+这些二进制不由 Antidote 管理。安装来源与更新机制必须保持一一对应。
 
-~~~bash
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+## 4. 初始化 dotfiles 并建立实际软件包
 
-git -C "$DOTFILES_DIR" status --short --branch
-git -C "$DOTFILES_DIR" ls-files -- zsh
-~~~
+只有第 1 节确认目标不存在时，才执行：
 
-如果第二条命令已经列出受跟踪的 Zsh 配置，先阅读并按第 5 节迁移清单逐项比较；不要用本文骨架覆盖已有事实来源。确认这是第一次建立 `zsh` package 时，才创建配置源，并预建用于容纳符号链接和本机覆盖的真实目标目录：
+```bash
+DOTFILES_DIR="$HOME/.dotfiles"
 
-~~~bash
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
-zsh_source_dir="$DOTFILES_DIR/zsh/.config/zsh"
+if [ -e "$DOTFILES_DIR" ]; then
+  printf '停止：目标已经存在：%s\n' "$DOTFILES_DIR" >&2
+else
+  mkdir -p "$DOTFILES_DIR"
+  git -C "$DOTFILES_DIR" init
+  mkdir -p \
+    "$DOTFILES_DIR/zsh/.config/zsh" \
+    "$DOTFILES_DIR/atuin/.config/atuin" \
+    "$DOTFILES_DIR/starship/.config" \
+    "$HOME/.config/zsh" \
+    "$HOME/.config/atuin"
+fi
+```
 
-mkdir -p "$zsh_source_dir" "$HOME/.config/zsh"
-touch "$DOTFILES_DIR/zsh/.zshenv"
-touch "$zsh_source_dir/.zprofile"
-touch "$zsh_source_dir/.zshrc"
-touch "$zsh_source_dir/.zsh_plugins.txt"
-~~~
+看到“停止”后不要执行后续小节；先按第 1 节查清目录来源。只有 `else` 分支实际完成初始化时才继续。
 
-这里不创建仓库中的 `local.zprofile` 或 `local.zsh`。它们是部署后位于 `$HOME/.config/zsh` 的本机真实文件，不能成为符号链接源。
+将以下内容保存为 `$DOTFILES_DIR/README.md`：
 
-### 配置 `~/.zshenv`
+```markdown
+# dotfiles
 
-将下列内容保存到 `$DOTFILES_DIR/zsh/.zshenv`。若 `~/.zshenv` 原本存在，先按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#7. 安全接管已经存在的配置|安全接管已有配置]] 对照备份、选择内容并处理 Stow 冲突：
+This repository stores reusable terminal configuration sources.
 
-~~~zsh
+## Packages
+
+- `zsh`: Zsh startup files and Antidote plugin manifest.
+- `atuin`: reviewed non-secret Atuin preferences.
+- `starship`: minimal cross-machine prompt configuration.
+
+## Deployment
+
+Install Git, GNU Stow, Zsh, Antidote, and the referenced CLI tools. Run the
+same explicit package list with Stow `--simulate --restow` first, review the
+output, and then run `--restow` without `--simulate`.
+
+## Local-only data
+
+Machine-local overrides, shell history, Atuin keys and databases, caches,
+plugin clones, logs, and secrets stay outside Git.
+```
+
+`zsh/.zshenv` 将部署到 `$HOME/.zshenv`，`atuin/.config/atuin/config.toml` 将部署到 `$HOME/.config/atuin/config.toml`。这就是 Stow 软件包“内部镜像目标目录”的规则。三个软件包共同构成 `.zshrc` 的受管配置闭包，必须一起部署后才能验证真实 Zsh。
+
+## 5. 建立独立于旧 Bash 的 Zsh 与组件配置基线
+
+旧 Bash 配置因机器而异，但 Zsh 的启动入口、原生历史、插件加载和工具初始化是这套环境固定需要的基线。由于 `.zshrc` 会初始化 Atuin 和 Starship，本节也先建立它们的受管配置源；下一节才有依据判断哪些 Bash 行为已经被替代、哪些仍需迁移。
+
+本节只建立目标结构，不宣称旧配置已经迁移完成。`.zshrc` 对 `common.zsh`、`linux.zsh` 和 local 文件都使用“存在且可读才加载”的判断，因此共享与平台文件可以等到真正出现第一项保留内容时再创建。
+
+### 5.1 写入最小 `.zshenv`
+
+将以下内容保存为 `$DOTFILES_DIR/zsh/.zshenv`：
+
+```zsh
 export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
 
-# 所有 Zsh 都会读取 .zshenv，因此这里只保留 SSH 非交互命令也要看到的 PATH。
+# 所有 Zsh 都读取 .zshenv，只保留非交互命令也需要的 PATH。
 typeset -U path PATH
 [[ -d /usr/local/bin ]] && path=(/usr/local/bin $path)
 [[ -d /opt/homebrew/bin ]] && path=(/opt/homebrew/bin $path)
@@ -401,16 +333,16 @@ typeset -U path PATH
 [[ -d "$HOME/.atuin/bin" ]] && path=("$HOME/.atuin/bin" $path)
 [[ -d "$HOME/.local/bin" ]] && path=("$HOME/.local/bin" $path)
 export PATH
-~~~
+```
 
-不存在的用户二进制目录不会加入 PATH。不要在 `.zshenv` 中加载插件、打印文字或运行网络命令。
+这些路径对应第 3 节已经安装的工具。此时不要顺手加入旧 Bash 中的其他 PATH；下一节会先判断它是否真的需要影响所有 Zsh，包括 SSH 非交互命令。
 
-### 配置 `.zprofile`
+### 5.2 写入共享 `.zprofile` 和本机登录入口
 
-将下列跨平台内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zprofile`；Stow 部署后的运行时目标才是 `~/.config/zsh/.zprofile`：
+将以下内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zprofile`：
 
-~~~zsh
-# macOS 登录 Shell 会执行；Ubuntu 上因文件不存在而自然跳过。
+```zsh
+# macOS 会命中 Homebrew；Ubuntu 因路径不存在而自然跳过。
 if [[ -x /opt/homebrew/bin/brew ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
 elif [[ -x /usr/local/bin/brew ]]; then
@@ -418,52 +350,51 @@ elif [[ -x /usr/local/bin/brew ]]; then
 fi
 
 [[ -r "$ZDOTDIR/local.zprofile" ]] && source "$ZDOTDIR/local.zprofile"
-~~~
+```
 
-### 声明插件与 `.zshrc`
+共享源文件只提供跨机器的登录入口。机器路径、账号、代理或秘密以后写入真实目标 `$HOME/.config/zsh/local.zprofile`，不进入 Git。先建立这个私有入口并收紧权限：
 
-将下列内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zsh_plugins.txt`：
+```bash
+previous_umask=$(umask)
+umask 077
 
-~~~text
+# : 是 Shell 内置命令，是空操作，用于增加可读性，从功能上可省略
+test -e "$HOME/.config/zsh/local.zprofile" \
+  || : > "$HOME/.config/zsh/local.zprofile"
+chmod 600 "$HOME/.config/zsh/local.zprofile"
+
+umask "$previous_umask"
+unset previous_umask
+```
+
+### 5.3 写入插件清单与交互式 `.zshrc`
+
+将以下内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zsh_plugins.txt`：
+
+```text
 zsh-users/zsh-autosuggestions
 zsh-users/zsh-syntax-highlighting kind:clone
-~~~
+```
 
-`.zsh_plugins.txt` 是 Antidote 的插件声明清单，不是直接执行的 Shell 脚本。每行先写 GitHub 仓库的 `owner/repo`；稍后的 `.zshrc` 执行 `antidote load "$ZDOTDIR/.zsh_plugins.txt"` 时，Antidote 会下载缺少的仓库，并根据行尾标注决定如何加载：
+再将以下内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zshrc`：
 
-- `zsh-autosuggestions` 根据历史记录给出输入建议，也可配置为参考补全结果。它没有额外标注，因此使用默认的 `kind:zsh`，由 Antidote 下载并加载；
-- `zsh-syntax-highlighting` 在输入命令时进行语法高亮，帮助执行前发现错误。`kind:clone` 表示这里只由 Antidote 下载、不自动加载；稍后的 `.zshrc` 会等其他交互组件初始化完成后再最后 `source` 它，满足该插件的加载顺序要求。
-
-这里只保留两个职责明确的插件。新增插件意味着在每个交互式 Zsh 中执行新的第三方代码，应先确认实际需要并审查其仓库与加载要求。
-
-再将下列骨架保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zshrc`；代码注释仍使用运行时目标路径，便于理解 Zsh 实际读取什么：
-
-~~~zsh
-# 使用 Emacs 风格键位，供后续 ZLE 插件在同一套基础键位映射上绑定按键。
+```zsh
 bindkey -e
 
-# 原生 Zsh 历史写入 XDG state，作为 Atuin 之外的本地回退。
+# 原生 Zsh 历史位于 XDG state，作为 Atuin 之外的本地回退。
 zsh_state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/zsh"
 mkdir -p "$zsh_state_dir"
 HISTFILE="$zsh_state_dir/history"
-
-# 内存历史最多保留 50000 条，磁盘历史文件长期保留 20000 条。
 HISTSIZE=50000
 SAVEHIST=20000
-
-# 多个会话退出时追加历史；需要裁剪时优先淘汰有副本的旧记录。
 setopt append_history
 setopt hist_expire_dups_first
-
-# 原生历史跳过相邻重复和空格开头的命令，并压缩无意义的多余空白。
 setopt hist_ignore_dups
 setopt hist_ignore_space
 setopt hist_reduce_blanks
-
-# 临时路径变量不再需要，避免留在当前 Shell 的全局参数中。
 unset zsh_state_dir
 
-# 按“跨平台共享 → 当前平台 → 本机私有”的顺序加载可选配置；文件不存在时跳过，后加载内容可以覆盖前面的默认值。
+# 跨平台共享 → 当前平台 → 本机私有；后加载内容可覆盖默认值。
 [[ -r "$ZDOTDIR/common.zsh" ]] && source "$ZDOTDIR/common.zsh"
 case "$OSTYPE" in
   darwin*) [[ -r "$ZDOTDIR/macos.zsh" ]] && source "$ZDOTDIR/macos.zsh" ;;
@@ -471,342 +402,525 @@ case "$OSTYPE" in
 esac
 [[ -r "$ZDOTDIR/local.zsh" ]] && source "$ZDOTDIR/local.zsh"
 
-# 初始化 Zsh 自带的可编程补全，让 Tab 能根据当前命令和参数位置提供候选项。
-# 补全转储是可重新生成的初始化缓存；按 Zsh 版本分文件，避免升级后复用旧结果。
 zcompdump="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
 mkdir -p "${zcompdump:h}"
-
-# 从 Zsh 函数搜索路径自动加载 compinit，并用指定转储文件初始化当前会话的补全系统。
 autoload -Uz compinit
 compinit -d "$zcompdump"
-
-# 只清理临时路径变量，磁盘上的补全转储仍保留供下次启动复用。
 unset zcompdump
 
-# Antidote 本体放在 XDG data；可重新下载的插件仓库与管理缓存放在 XDG cache。
 export ANTIDOTE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/antidote"
 antidote_dir="${XDG_DATA_HOME:-$HOME/.local/share}/antidote"
-
-# 入口可读时把 Antidote 管理函数加载到当前 Shell，再处理共享插件清单。
+plugin_manifest="$ZDOTDIR/.zsh_plugins.txt"
+plugin_static="${XDG_CACHE_HOME:-$HOME/.cache}/antidote/zsh_plugins.zsh"
 if [[ -r "$antidote_dir/antidote.zsh" ]]; then
   source "$antidote_dir/antidote.zsh"
-
-  # 在自动建议插件加载前设置低亮度显示样式。
   ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
-
-  # 下载缺失的插件仓库并加载普通插件；kind:clone 项只下载，留待后文手动加载。
-  antidote load "$ZDOTDIR/.zsh_plugins.txt"
+  mkdir -p "${plugin_static:h}"
+  antidote load "$plugin_manifest" "$plugin_static"
 else
-  # 本体缺失时只向标准错误报告，保留无插件但仍可使用的基础 Zsh。
   print -u2 "Antidote is missing: $antidote_dir"
 fi
+unset antidote_dir plugin_manifest plugin_static
 
-# 只清理本体路径临时变量；ANTIDOTE_HOME 继续供 Antidote 的后续命令使用。
-unset antidote_dir
-
-# 仅在 fzf 存在且支持 --zsh 时加载按键绑定与模糊补全，避免缺失或旧版本打断 Shell 启动。
-# 保留 Ctrl-T 文件选择；禁用 fzf 的 Ctrl-R 与 Alt-C，分别由 Atuin 和 zoxide 的 zi 承担历史搜索与目录选择。
+# fzf 保留 Ctrl-T 与补全；Ctrl-R 交给 Atuin，目录选择统一使用 zi。
 if (( $+commands[fzf] )) && fzf --zsh >/dev/null 2>&1; then
   FZF_CTRL_R_COMMAND= FZF_ALT_C_COMMAND= source <(fzf --zsh)
 fi
 
-# 若已安装 Atuin，则加载用于记录命令的钩子与历史搜索按键，并由它接管 Ctrl-R。
-# 不让 Atuin 覆盖上箭头或绑定 ? 的 AI 入口，使原有历史翻阅与普通输入行为保持不变。
 (( $+commands[atuin] )) && eval "$(atuin init zsh --disable-up-arrow --disable-ai)"
-
-# 若已安装 zoxide，则在 compinit 后加载用于记录目录访问的钩子、z/zi 命令及补全。
-# z 按访问记录排名跳转，zi 通过 fzf 交互选择；未使用 --cmd cd，因此不替换原生 cd。
 (( $+commands[zoxide] )) && eval "$(zoxide init zsh)"
-
-# 若已安装 Starship，则加载提示符钩子，按当前目录、Git 状态和上一条命令结果渲染提示符。
-# 它只接管提示符；放在其他提示符配置之后，避免初始化结果再次被覆盖。
 (( $+commands[starship] )) && eval "$(starship init zsh)"
 
-# 语法高亮在插件清单中以 kind:clone 只下载；Antidote 可用时再查询其本地目录。
+# 语法高亮在其他交互组件之后加载。
 if (( $+functions[antidote] )); then
   zsh_highlight_root="$(antidote path zsh-users/zsh-syntax-highlighting 2>/dev/null)"
-
-  # 主脚本可读时才最后手动加载，使高亮钩子在其他 Zsh 行编辑器（ZLE）组件之后注册。
   if [[ -r "$zsh_highlight_root/zsh-syntax-highlighting.zsh" ]]; then
     source "$zsh_highlight_root/zsh-syntax-highlighting.zsh"
   fi
-
-  # 清理仅用于定位插件的临时变量。
   unset zsh_highlight_root
 fi
-~~~
+```
 
-写完骨架后回到第 5 节迁移清单，逐项落实已经决定保留的内容：第一条跨平台别名或函数进入仓库源树的 `common.zsh`，第一项 Ubuntu 专属设置进入 `linux.zsh`；没有实际内容时不创建对应文件，前面的可读性判断会自然跳过。机器私有的登录环境和交互配置暂时不写进仓库，等第 9 节部署后再分别写入真实的 `local.zprofile` 和 `local.zsh`。
+这份 `.zshrc` 已经明确接管 Zsh 原生历史、补全、Antidote 插件、fzf、Atuin、zoxide 和 Starship。下一节审阅 Bash 历史、提示符或补全配置时，应先与这里的现有能力比较，而不是再复制一套。
 
-不要为了目录看起来完整而创建空配置，也不要把第 2 节备份整体复制进 package。完成当前轮写入后检查 Git 现场，确认只有预期的配置源和初始化 README：
+### 5.4 建立本机交互入口
 
-~~~bash
-git -C "$DOTFILES_DIR" status --short --branch
-~~~
+机器私有的交互配置写入真实目标 `$HOME/.config/zsh/local.zsh`，不进入 Git：
 
-## 8. 检查仓库源并隔离测试
+```bash
+previous_umask=$(umask)
+umask 077
 
-先解析 `zsh` package 中已经存在的配置源，包括第 5 节迁入的可选平台文件：
+test -e "$HOME/.config/zsh/local.zsh" || : > "$HOME/.config/zsh/local.zsh"
+chmod 600 "$HOME/.config/zsh/local.zsh"
 
-~~~bash
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
-zsh_source_dir="$DOTFILES_DIR/zsh/.config/zsh"
+umask "$previous_umask"
+unset previous_umask
+```
 
-source_layout_ok=1
-for required_source in \
-  "$DOTFILES_DIR/zsh/.zshenv" \
-  "$zsh_source_dir/.zprofile" \
-  "$zsh_source_dir/.zshrc" \
-  "$zsh_source_dir/.zsh_plugins.txt"
-do
-  if [ ! -f "$required_source" ]; then
-    printf 'missing required source: %s\n' "$required_source" >&2
-    source_layout_ok=0
-  fi
-done
+### 5.5 写入 Atuin 的受管配置
 
-config_syntax_ok=1
-for config_source in \
-  "$DOTFILES_DIR/zsh/.zshenv" \
-  "$zsh_source_dir/.zprofile" \
-  "$zsh_source_dir/.zshrc" \
-  "$zsh_source_dir/common.zsh" \
-  "$zsh_source_dir/macos.zsh" \
-  "$zsh_source_dir/linux.zsh"
-do
-  [ -f "$config_source" ] || continue
-  if ! zsh -n "$config_source"; then
-    config_syntax_ok=0
+将以下内容保存为 `$DOTFILES_DIR/atuin/.config/atuin/config.toml`：
+
+```toml
+# 即使已经登录 Atuin 账户，也不自动同步；需要同步时可手动运行 `atuin sync`。
+# 若希望 Atuin 定期自动同步，可改为 true；更新检查由 update_check 单独控制。
+auto_sync = false
+
+# false：选中历史后先回填到 Shell 命令行，便于检查或编辑，再按 Enter 执行。
+# true：在 Atuin 界面中按 Enter 会立即执行选中的命令。
+enter_accept = false
+
+# 使用精简界面；可改为 auto（按终端高度切换）或 full（完整界面）。
+style = "compact"
+
+# 限制界面最多占 20 行；调大可同时显示更多内容，设为 0 则使用全部可用高度。
+inline_height = 20
+
+# 打开交互搜索时先检索全部历史；也可改为 host、session、directory 或 workspace。
+# 进入界面后仍可用 Ctrl-R 循环切换已启用的过滤模式。
+filter_mode = "global"
+
+# 启用 workspace 过滤能力：在 Git 仓库中可检索整个仓库树，而不只当前目录。
+# 不在 Git 仓库时 workspace 模式会被跳过。
+workspaces = true
+
+# 启用 Atuin 内置的凭据格式过滤；它只是安全网，不能覆盖所有秘密格式。
+secrets_filter = true
+
+# history_filter 使用正则表达式；^ 和 $ 分别限定命令开头和结尾。
+# 自定义正则只阻止之后匹配的命令入库，不会自动删除既有历史。
+# 调整规则后若要清理旧记录，应先用 `atuin history prune --dry-run` 预览影响。
+history_filter = [
+  # 排除以 export 开头、变量名以 _TOKEN、_PASSWORD 或 _SECRET 结尾的赋值。
+  "^export .*(_TOKEN|_PASSWORD|_SECRET)=",
+  # 排除以 curl 开头且包含 Authorization: 请求头的命令。
+  "^curl .*Authorization:",
+]
+```
+
+此处先写仓库源，不运行 `atuin info`、`atuin doctor` 或 `atuin init`。这些命令会加载设置，并可能在配置缺失时创建普通 `config.toml`；第 7 节先让 Stow 拥有目标路径。
+
+### 5.6 写入 Starship 的受管配置
+
+将以下内容保存为 `$DOTFILES_DIR/starship/.config/starship.toml`：
+
+```toml
+"$schema" = "https://starship.rs/config-schema.json"
+
+add_newline = false
+
+[hostname]
+ssh_only = true
+format = "[$hostname]($style) "
+
+[character]
+success_symbol = "[>](bold green)"
+error_symbol = "[>](bold red)"
+```
+
+这是一份可运行的最小基线，而不是最终个性化主题。到这里仍不要启动真实 Zsh；旧 Bash 中的 PATH、SDK、别名、函数和本机设置还必须经过下一节的逐项判断。完整启动顺序和扩展规则见 [[Zsh 与 Antidote 跨机器配置管理]]。
+
+## 6. 逐项审阅并迁移旧 Bash 行为
+
+迁移单位是“仍想保留的行为”，不是 Bash 文件或代码块。一个 `.bashrc` 可能同时包含历史、提示符、Linux 命令、跨平台别名和机器秘密，它们不会进入同一个 Zsh 文件。
+
+### 6.1 确认 Bash 实际读取链与个人改动
+
+交互式登录 Bash 会在 `.bash_profile`、`.bash_login`、`.profile` 中读取第一个存在且可读的文件，不会自动依次读取三个文件；入口文件仍可能通过 `source` 或 `.` 显式加载其他文件。交互式非登录 Bash 通常读取 `.bashrc`，`.bash_aliases` 只有被 `.bashrc` 等入口显式加载才会生效。
+
+先确定登录入口，再依次完整阅读存在的候选文件。`less` 中按 `q` 退出当前文件，随后会打开下一个文件：
+
+```bash
+login_entry=""
+for startup_file in \
+  "$HOME/.bash_profile" \
+  "$HOME/.bash_login" \
+  "$HOME/.profile"; do
+  if [ -r "$startup_file" ]; then
+    login_entry="$startup_file"
     break
   fi
 done
 
-if [ "$source_layout_ok" -eq 1 ] && [ "$config_syntax_ok" -eq 1 ]; then
-  printf 'repository-source syntax verified\n'
-  unset config_source config_syntax_ok required_source source_layout_ok zsh_source_dir
-else
-  printf 'STOP: repository-source syntax verification failed\n' >&2
-  false
-fi
-~~~
+printf 'Bash login entry: %s\n' "${login_entry:-not found}"
 
-语法全部通过后，不修改账户登录 Shell，直接把仓库中的配置目录交给一个新的测试进程：
+for startup_file in \
+  "$HOME/.bash_profile" \
+  "$HOME/.bash_login" \
+  "$HOME/.profile" \
+  "$HOME/.bashrc" \
+  "$HOME/.bash_aliases" \
+  "$HOME/.bash_logout" \
+  "$HOME/.inputrc"; do
+  [ -f "$startup_file" ] || continue
+  printf '\nreading: %s\n' "$startup_file"
+  less -N "$startup_file"
+done
 
-~~~bash
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+unset login_entry startup_file
+```
 
-env ZDOTDIR="$DOTFILES_DIR/zsh/.config/zsh" zsh -lic '
-  echo "repository-source config loaded"
-  command -v antidote starship atuin zoxide fzf
-'
-~~~
+阅读入口中的 `source` 或 `.` 时继续打开其真实目标；不能只凭文件名判断一段配置是否生效。还可以把 Ubuntu 当前用户文件与 `/etc/skel` 中的新用户模板比较，用于定位后来增加或修改的内容：
 
-首次加载时 Antidote 会访问 GitHub 并克隆插件。这个测试只证明 `.zprofile`、`.zshrc`、插件和可共享迁移内容能够从仓库源目录加载；它通过环境变量绕过了根目录 `.zshenv`，因此不能证明真实的 `~/.zshenv → ZDOTDIR` 引导链。引导链必须在下一节部署后单独通过验证。
+```bash
+for base_name in .profile .bashrc; do
+  current_file="$HOME/$base_name"
+  skeleton_file="/etc/skel/$base_name"
+  if [ -f "$current_file" ] && [ -f "$skeleton_file" ]; then
+    printf '\ncomparing: %s\n' "$base_name"
+    diff -u "$skeleton_file" "$current_file" || true
+  fi
+done
 
-## 9. 用 Stow 接管并验证真实启动链
+unset base_name current_file skeleton_file
+```
 
-先模拟部署 `zsh` package。已有目标发生冲突时必须回到 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#7. 安全接管已经存在的配置|安全接管已有配置]] 完成备份、比较和内容选择，不使用 `--adopt` 跳过判断：
+没有差异只能说明它与**当前**模板相同；模板可能在账号创建后更新，因此这是一条定位线索，不是“没有个人配置”的绝对证明。反过来，来自默认模板的行为也可以按实际需要选择保留，不能机械删除。
 
-~~~bash
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+在私密工作记录中为每一项候选行为登记以下信息。不要把可能含账号、主机名、代理或秘密的原始配置复制进公开笔记或 dotfiles：
 
+| 来源与行号 | 想保留的行为 | 生效时机 | 共享范围 | 新落点或决定 | 验证方法 |
+| --- | --- | --- | --- | --- | --- |
+| 例如：`.bashrc` 中的 `ll` | 显示详细文件列表 | 交互式 | 跨平台 | `common.zsh` | 新 Zsh 中运行 `alias ll` 与 `ll` |
+
+### 6.2 迁移登录环境
+
+从前一步输出的 `Bash login entry` 文件开始，并继续追踪它显式加载的文件。每遇到一项 `export`、PATH 修改或环境初始化，按下面的顺序判断并立即编辑目标文件：
+
+1. 这个行为是否仍然需要？如果只是旧工具残留，明确放弃，不迁移。
+2. 它必须让所有 Zsh 都生效，还是只在登录 Shell 中需要？不要因为内容是 PATH 就一律放进 `.zshenv`。
+3. 它能否跨机器共享？机器路径、账号、代理和秘密只能进入 local 文件。
+4. `.profile` 是否还要服务桌面会话或其他 POSIX Shell？需要时保留原配置，并为 Zsh 单独表达同一行为。
+
+| 行为的真实范围 | 新落点 | 处理原则 |
+| --- | --- | --- |
+| 所有 Zsh，包括适用的 SSH 非交互命令都必须看到的最小 PATH | `$DOTFILES_DIR/zsh/.zshenv` | 使用目录存在判断；不运行插件、提示符或输出文字 |
+| 跨机器共享的登录环境 | `$DOTFILES_DIR/zsh/.config/zsh/.zprofile` | 改写为 Zsh 兼容语法；不整体 `source ~/.profile` |
+| 机器私有的登录环境 | `$HOME/.config/zsh/local.zprofile` | 权限保持为 `600`，不进入 Git |
+| 仍需服务桌面会话或 POSIX Shell 的环境 | 保留在 `.profile` | Zsh 同样需要时，在合适的 Zsh 文件中单独表达，不删除原入口 |
+| Bash 专属、失效或已经不再需要的初始化 | 不迁移 | 在迁移记录中写明原因 |
+
+每写入一项就对实际修改的目标运行语法检查；全部登录环境处理完后再统一检查一次：
+
+```bash
+DOTFILES_DIR="$HOME/.dotfiles"
+
+zsh -n "$DOTFILES_DIR/zsh/.zshenv"
+zsh -n "$DOTFILES_DIR/zsh/.config/zsh/.zprofile"
+zsh -n "$HOME/.config/zsh/local.zprofile"
+```
+
+语法通过只表示 Zsh 可以解析，不表示 PATH、SDK 或环境变量已经在真实新会话中生效。为每一项同时记录 `command -v`、变量输出或工具自检命令，留到第 8 节运行。
+
+### 6.3 迁移交互式别名、函数和工具初始化
+
+接着审阅 `.bashrc` 以及它实际加载的 `.bash_aliases`。先问“想保留什么行为”，再决定 Zsh 表达和落点：
+
+| Bash 中的行为 | 新落点或决定 |
+| --- | --- |
+| 跨 macOS、Linux 的交互别名或函数 | 有第一项有效内容时创建 `common.zsh` |
+| 依赖 Linux 路径、GNU 命令或 Ubuntu 行为的交互配置 | 有第一项有效内容时创建 `linux.zsh` |
+| 机器路径、代理、账号、秘密或仅本机需要的函数 | `$HOME/.config/zsh/local.zsh` |
+| `HISTCONTROL`、`HISTSIZE`、`shopt -s histappend` 等 Bash 历史设置 | 不复制；先与第 5 节的 Zsh 历史和 Atuin 配置比较 |
+| `PS1`、`PROMPT_COMMAND` | 不复制；提示符已由 Starship 接管 |
+| Bash `complete`、`bash-completion` 初始化 | 不直接复制；Zsh 已使用 `compinit`，再按具体工具确认是否需要 Zsh 补全 |
+| `bind` 或 Readline 键位 | 不复制到 `.zshrc`；Zsh 使用 `bindkey`，而 `.inputrc` 仍可服务其他 Readline 程序 |
+| Bash 数组、`shopt` 或其他 Bash 专属语法 | 不逐字复制；先确认能力，再寻找 Zsh 等价实现 |
+
+不要整体 `source ~/.bashrc`，也不要为了保留一条别名复制整段 Ubuntu 默认配置。`common.zsh` 与 `linux.zsh` 只有在出现第一项确定保留的内容时才创建；没有相应行为时，让 `.zshrc` 的可读性判断自然跳过它们。
+
+每次编辑后对实际存在的目标做增量语法检查：
+
+```bash
+DOTFILES_DIR="$HOME/.dotfiles"
+zsh_source_dir="$DOTFILES_DIR/zsh/.config/zsh"
+
+for migrated_source in \
+  "$zsh_source_dir/common.zsh" \
+  "$zsh_source_dir/linux.zsh" \
+  "$HOME/.config/zsh/local.zsh"; do
+  [ -f "$migrated_source" ] && zsh -n "$migrated_source"
+done
+
+unset migrated_source zsh_source_dir
+```
+
+语法检查之后仍要为每个别名、函数或 SDK 初始化记录真实的新 Zsh 验证命令。例如，别名既要用 `alias NAME` 确认定义，也要运行一次它负责的正常操作。
+
+### 6.4 明确保留但不迁移的 Bash 文件
+
+- `.bash_logout` 属于 Bash 登录 Shell 的退出流程，默认不迁移到 Zsh；保留它供显式 Bash 会话和回退使用。
+- `.inputrc` 是 GNU Readline 配置，不是 Bash 到 Zsh 的一对一迁移源。继续使用 Bash 或其他 Readline 程序时可以保留它；Zsh 键位需求单独用 `bindkey` 表达。
+- `.profile`、`.bashrc` 和 `.bash_aliases` 在迁移完成后也暂不删除。它们既是回退依据，也可能继续被显式 Bash 或其他会话读取。
+
+### 6.5 关闭迁移清单
+
+进入部署前，逐行确认私密迁移记录满足以下条件：
+
+1. 每项候选行为都有“迁移、由 Zsh 基线替代、继续留在 Bash、明确放弃”四类结论之一；
+2. 迁移项已经写入真实目标，不是只有未来落点；
+3. 每个修改过的 Zsh 文件都通过了 `zsh -n`；
+4. 每项行为都有准备在第 8 节执行的验证命令；
+5. local 文件、历史、秘密和机器身份均未进入 dotfiles。
+
+只有清单已经关闭，才进入下一节统一检查仓库源并部署。后文不再重新决定旧配置的落点。
+
+## 7. 检查仓库源，再让 Stow 接管
+
+先做语法检查：
+
+```bash
+DOTFILES_DIR="$HOME/.dotfiles"
+zsh_source_dir="$DOTFILES_DIR/zsh/.config/zsh"
+
+zsh -n "$DOTFILES_DIR/zsh/.zshenv"
+zsh -n "$zsh_source_dir/.zprofile"
+zsh -n "$zsh_source_dir/.zshrc"
+test -s "$DOTFILES_DIR/atuin/.config/atuin/config.toml"
+test -s "$DOTFILES_DIR/starship/.config/starship.toml"
+
+for optional_source in \
+  "$zsh_source_dir/common.zsh" \
+  "$zsh_source_dir/linux.zsh" \
+  "$HOME/.config/zsh/local.zprofile" \
+  "$HOME/.config/zsh/local.zsh"; do
+  [ -f "$optional_source" ] && zsh -n "$optional_source"
+done
+```
+
+模拟部署：
+
+```bash
+DOTFILES_DIR="$HOME/.dotfiles"
 stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
-  --simulate --verbose=2 zsh
-~~~
+  --simulate --restow --verbose=2 zsh atuin starship
+```
 
-确认模拟输出只涉及预期路径且没有 conflict 后，再执行实际部署并检查关键链接：
+若出现冲突，对照第 2 节备份、当前目标和仓库源。只移动确认由新配置替代的明确文件；不要使用 `--adopt` 自动改写仓库，也不要移动整个 `$HOME/.config`。
 
-~~~bash
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+模拟无冲突后，应用完全相同的软件包列表：
 
+```bash
+DOTFILES_DIR="$HOME/.dotfiles"
 stow --dir="$DOTFILES_DIR" --target="$HOME" --no-folding \
-  --verbose=2 zsh
+  --restow --verbose=2 zsh atuin starship
+```
 
+检查关键目标都是链接，local 文件仍是真实文件：
+
+```bash
 managed_links_ok=1
 for managed_path in \
   "$HOME/.zshenv" \
   "$HOME/.config/zsh/.zprofile" \
-  "$HOME/.config/zsh/.zshrc"
-do
-  if [ -L "$managed_path" ]; then
-    printf 'managed link: %s -> %s\n' "$managed_path" "$(readlink "$managed_path")"
-  else
-    printf 'expected managed link: %s\n' "$managed_path" >&2
+  "$HOME/.config/zsh/.zshrc" \
+  "$HOME/.config/zsh/.zsh_plugins.txt" \
+  "$HOME/.config/atuin/config.toml" \
+  "$HOME/.config/starship.toml"; do
+  test -L "$managed_path" || {
+    printf 'expected symlink: %s\n' "$managed_path" >&2
     managed_links_ok=0
-  fi
+    continue
+  }
+  ls -ld "$managed_path"
+  readlink "$managed_path"
 done
 
-if [ "$managed_links_ok" -eq 1 ]; then
-  unset managed_links_ok managed_path
-else
+if [ "$managed_links_ok" -ne 1 ]; then
   printf 'STOP: managed-link verification failed\n' >&2
   false
 fi
-~~~
+unset managed_links_ok managed_path
 
-部署后创建权限收紧的本机覆盖，不覆盖已经存在的文件，并恢复执行前的 umask：
+test -f "$HOME/.config/zsh/local.zprofile" \
+  && test ! -L "$HOME/.config/zsh/local.zprofile"
+test -f "$HOME/.config/zsh/local.zsh" \
+  && test ! -L "$HOME/.config/zsh/local.zsh"
+```
 
-~~~bash
-previous_umask="$(umask)"
-umask 077
-[ -e "$HOME/.config/zsh/local.zprofile" ] || : > "$HOME/.config/zsh/local.zprofile"
-[ -e "$HOME/.config/zsh/local.zsh" ] || : > "$HOME/.config/zsh/local.zsh"
-umask "$previous_umask"
-unset previous_umask
-~~~
+## 8. 先验证真实 Zsh，再修改账号
 
-把第 5 节确认的机器私有登录环境和交互配置分别写入这两个真实文件；它们不经过仓库，也不能包含在稍后的 Git 暂存内容中。然后仍不执行 `chsh`，用已部署的真实入口启动一个新的登录 Zsh：
+保留当前 Bash 和备用 SSH 会话。用已部署入口启动一个新的登录交互 Zsh：
 
-~~~bash
+```bash
 zsh -lic '
   expected_zdotdir="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
-  printf "deployed ZDOTDIR: %s\n" "$ZDOTDIR"
-  [[ "$ZDOTDIR" == "$expected_zdotdir" ]] || {
-    print -u2 "unexpected ZDOTDIR: $ZDOTDIR"
-    exit 1
-  }
-  command -v antidote starship atuin zoxide fzf
+  printf "ZDOTDIR=%s\n" "$ZDOTDIR"
+  [[ "$ZDOTDIR" == "$expected_zdotdir" ]] || exit 1
+  command -v starship atuin zoxide fzf
+  (( $+functions[antidote] )) || exit 1
   bindkey "^R"
+  printf "startup-ok\n"
 '
-~~~
+```
 
-这一步同时经过 `~/.zshenv`、`ZDOTDIR`、`.zprofile`、`.zshrc` 和本机 `local` 文件。只有它成功，才允许修改账户登录 Shell。
+这一步经过 `.zshenv`、`.zprofile`、`.zshrc`、平台文件和本机 local 文件，也会首次真正执行 Atuin、Starship、zoxide、fzf 与 Antidote 初始化。还要逐项运行第 6 节为旧 PATH、SDK、别名和函数准备的验证命令。
 
-## 10. 固化验证入口后再切换登录 Shell
+真实初始化后立即复查受管配置没有被应用替换成普通文件：
 
-第一次手工部署和真实启动链都成功后，按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#8. 固化可重复的部署和验证入口|dotfiles 部署与验证入口]] 保存 `scripts/deploy` 和 `scripts/verify`，再执行同一 package 的模拟与最低验证：
+```bash
+for managed_path in \
+  "$HOME/.zshenv" \
+  "$HOME/.config/zsh/.zshrc" \
+  "$HOME/.config/atuin/config.toml" \
+  "$HOME/.config/starship.toml"; do
+  test -L "$managed_path" || {
+    printf 'STOP: managed target changed ownership: %s\n' "$managed_path" >&2
+    false
+  }
+done
 
-~~~bash
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+git -C "$HOME/.dotfiles" status --short --branch
+```
 
-"$DOTFILES_DIR/scripts/deploy" --simulate zsh
-"$DOTFILES_DIR/scripts/verify"
-~~~
+Atuin 数据库、Antidote 插件和缓存、Zsh 历史可以在仓库外生成；它们不应改变上述链接，也不应出现在 dotfiles 工作树中。
 
-两项都通过后，才检查 Zsh 是否属于系统允许的登录 Shell，并修改当前用户的账户设置：
+全部通过后，才检查 Zsh 是否是允许的登录 Shell并修改当前账号：
 
-~~~bash
-zsh_path="$(command -v zsh)"
+```bash
+zsh_path=$(command -v zsh)
+
 if ! grep -Fx "$zsh_path" /etc/shells >/dev/null; then
   printf 'STOP: Zsh is not listed in /etc/shells: %s\n' "$zsh_path" >&2
   false
-else
-  chsh -s "$zsh_path"
-  account_shell_after="$(getent passwd "$(id -un)" | cut -d: -f7)"
-  if [ "$account_shell_after" = "$zsh_path" ]; then
-    printf 'account login shell changed: %s\n' "$account_shell_after"
-    unset account_shell_after zsh_path
-  else
-    printf 'STOP: account login shell was not changed: %s\n' \
-      "$account_shell_after" >&2
-    false
-  fi
 fi
-~~~
 
-不要使用 `sudo chsh` 修改其他账户。`chsh` 只改变后续登录应启动什么，不会把当前 Bash 进程变成 Zsh；完成后保留当前会话，再从另一个终端或 SSH 窗口验证新登录。
+chsh -s "$zsh_path"
+getent passwd "$(id -un)"
+unset zsh_path
+```
 
-## 11. 本地与 SSH 验收
+不要使用 `sudo chsh` 修改其他账户。`chsh` 不会把当前 Bash 进程变成 Zsh；必须重新登录验证。
 
-本地新开终端，或者从客户端重新建立 SSH 连接，执行：
+## 9. 本地与 SSH 新会话验收
 
-~~~zsh
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+在新终端或新 SSH 连接中执行：
 
-"$DOTFILES_DIR/scripts/verify"
-git -C "$DOTFILES_DIR" status --short --branch
+```zsh
 printf 'account login shell: '
 getent passwd "$(id -un)" | cut -d: -f7
-printf 'session SHELL variable: %s\n' "$SHELL"
-printf 'current shell: '
-ps -p $$ -o comm=
-printf 'ZDOTDIR: %s\n' "$ZDOTDIR"
+printf 'inherited SHELL=%s\n' "$SHELL"
+ps -p $$ -o comm=,args=
+printf 'ZDOTDIR=%s\n' "$ZDOTDIR"
+
 antidote list
 bindkey '^R'
 starship --version
 atuin doctor
 zoxide --version
 fzf --version
-zsh -lic 'echo startup-ok'
-~~~
+zsh -lic 'printf "startup-ok\n"'
+```
 
-Ubuntu Server、远程开发机或其他需要 SSH 的场景，还应从另一台机器验证非交互 PATH；纯本地 Desktop 不使用 SSH 时可把这一项明确记为不适用。执行时将示例主机替换为真实地址：
+交互验收包括：`Ctrl-R` 打开 Atuin；自动建议与语法高亮正常；`z` 和 `zi` 可导航；`Ctrl-T` 可选择文件；Starship 能在 Git 仓库显示状态。
 
-~~~bash
-ssh user@example-host '
+Ubuntu Server 还应从另一台机器检查非交互路径：
+
+```bash
+printf 'SSH destination: '
+IFS= read -r SSH_DESTINATION
+ssh "$SSH_DESTINATION" '
   printf "shell=%s ZDOTDIR=%s\n" "$SHELL" "$ZDOTDIR"
   command -v zsh starship atuin zoxide fzf
 '
-~~~
+unset SSH_DESTINATION
+```
 
-SSH 远程命令通常不会读取 `.zshrc`，但会经过 Zsh 的 `.zshenv`，因此应能找到这些二进制；提示符、按键和插件只在交互会话加载。再打开一个交互会话，验证 `Ctrl-R`、自动建议、语法高亮、`z`、`zi` 和 `Ctrl-T`，并逐项确认第 5 节决定保留的 PATH、SDK、别名与函数确实可用。
+SSH 远程命令通常不读取 `.zshrc`，但 Zsh 会读取 `.zshenv`；因此它应找到 CLI，却不应加载提示符和按键插件。纯本地 Desktop 不使用 SSH 时，将此项明确记为不适用。
 
-若 Ghostty 客户端中的 `$TERM` 在远端缺少 terminfo，不要在服务器的启动文件中永久伪造 `TERM`。应按 [[Ghostty 常用配置与 Shell 集成]] 检查当前 Ghostty 稳定版支持的 `ssh-env` 与 `ssh-terminfo` 功能，或使用其安全回退。
+## 10. 审查并提交已知良好 dotfiles
 
-## 12. 审查并保存已验证配置状态
+真实新登录通过后，审查工作树和秘密边界：
 
-只有第 11 节的真实新登录以及适用的 SSH 场景通过后，当前配置才有资格成为已知良好状态。先检查未跟踪文件和差异：
-
-~~~bash
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+```bash
+DOTFILES_DIR="$HOME/.dotfiles"
 
 git -C "$DOTFILES_DIR" status --short --branch
 git -C "$DOTFILES_DIR" diff --check
 git -C "$DOTFILES_DIR" diff
-~~~
+```
 
-然后按 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#9. 首次提交与可选远端|首次提交流程]]只暂存经过审查的 README、`zsh` package 和脚本，检查暂存 diff 与秘密边界后再提交。第一次建立的仓库由此形成第一个已知良好提交；从远端恢复的仓库只有在本机确实产生了应共享的配置变化时才创建新提交。远端仍是可选项，不是本地 Git 成立的前提。
+只暂存稳定源文件：
 
-第 2 节备份、`local.zprofile`、`local.zsh` 和历史数据都不能出现在 `git ls-files` 中。后续更新、快照和回退见 [[现代终端环境更新、验证与回退]]。
+```bash
+DOTFILES_DIR="$HOME/.dotfiles"
 
-## 13. 按来源导入 Bash 与 Zsh 历史
+git -C "$DOTFILES_DIR" add -- README.md zsh atuin starship
+git -C "$DOTFILES_DIR" diff --cached --check
+git -C "$DOTFILES_DIR" diff --cached
+git -C "$DOTFILES_DIR" grep --cached -nEi \
+  '(password|passwd|token|secret|private[ _-]?key|api[ _-]?key)' -- . || true
+git -C "$DOTFILES_DIR" commit -m "feat: establish modern terminal dotfiles"
+git -C "$DOTFILES_DIR" status --short --branch
+git -C "$DOTFILES_DIR" log -1 --format=fuller
+```
 
-已知良好配置保存后，先阅读第 2 节备份的历史副本，排除不应进入 Atuin 的敏感命令。再把下列占位目录替换为实际备份目录，并按原始 Shell 格式选择导入器：
+第 2 节备份、local 文件、历史、Atuin 密钥、插件 clone 和缓存都不能出现在 `git ls-files` 中。需要远端时，在托管平台先创建空仓库，再交互读取实际 URL 并推送：
 
-~~~bash
-backup_dir="$HOME/.terminal-backups/YYYYMMDD-HHMMSS"
-if [ -f "$backup_dir/bash-history" ]; then
-  HISTFILE="$backup_dir/bash-history" atuin import bash
+```bash
+DOTFILES_DIR="$HOME/.dotfiles"
+printf 'dotfiles remote URL: '
+IFS= read -r REPO_URL
+git -C "$DOTFILES_DIR" remote add origin "$REPO_URL"
+git -C "$DOTFILES_DIR" remote -v
+git -C "$DOTFILES_DIR" push -u origin "$(git -C "$DOTFILES_DIR" branch --show-current)"
+```
+
+## 11. 已知良好提交之后再迁移历史
+
+原始历史更可能包含临时令牌、主机名和运维参数。不要直接导入备份：先复制到备份目录之外的临时工作副本，人工删除敏感行并确认权限，再输入脱敏副本路径。
+
+```bash
+printf 'sanitized Bash history path: '
+IFS= read -r sanitized_bash_history
+
+if [ -f "$sanitized_bash_history" ]; then
+  HISTFILE="$sanitized_bash_history" atuin import bash
 fi
-if [ -f "$backup_dir/zsh-history" ]; then
-  HISTFILE="$backup_dir/zsh-history" atuin import zsh
+
+printf 'sanitized Zsh history path, or leave empty: '
+IFS= read -r sanitized_zsh_history
+
+if [ -n "$sanitized_zsh_history" ] && [ -f "$sanitized_zsh_history" ]; then
+  HISTFILE="$sanitized_zsh_history" atuin import zsh
 fi
+
 atuin stats
-git -C "${DOTFILES_DIR:-$HOME/.dotfiles}" status --short --branch
-~~~
+git -C "$HOME/.dotfiles" status --short --branch
+unset sanitized_bash_history sanitized_zsh_history
+```
 
-`atuin import bash` 和 `atuin import zsh` 解析的是不同历史格式；同一文件不能为了“多导入一些”而交给两种导入器，也不要反复执行同一导入块。新骨架已把 Zsh 的原生 `HISTFILE` 切到 XDG state，因此这里显式指定旧文件副本；切换后直接运行 `atuin import auto` 会根据当前 `$SHELL` 选择 Zsh，并可能只读到新的历史文件，从而遗漏原来的 Bash 历史。导入不会删除备份，也不应改变 dotfiles Git 工作区。服务器命令更可能包含临时令牌、主机名或运维参数，应先阅读 [[Atuin 命令历史管理]] 的过滤规则；注册账户和跨机器同步始终是可选项。
+两种导入器解析不同格式，同一文件不能交给两个解析器，也不要重复导入。Atuin 注册和同步始终可选，详见 [[Atuin 命令历史管理]]。
 
-## 14. 可选：Ubuntu Desktop 安装 Ghostty
+## 12. 可选：Ubuntu Desktop 安装 Ghostty
 
-核心 Shell 与 CLI 已经形成已知良好状态后，Ubuntu Desktop 用户可以再评估 Ghostty；Ubuntu Server 直接跳过本节。Ghostty 项目目前只直接发布 macOS 预编译二进制，Linux 包由发行版或社区维护者构建。Ghostty 官方安装页会列出当前可用的 Linux 包，并明确区分发行版包和风险更高的社区二进制。
+服务器跳过本节。Ghostty 官方目前直接发布 macOS 二进制；Linux 包可能由发行版或社区维护者构建。Ubuntu Desktop 应在 [Ghostty 安装页](https://ghostty.org/docs/install/binary) 核对当前系统可用来源、维护者和风险，优先受信任的软件仓库。
 
-推荐顺序是：
+没有合适来源时继续使用 GNOME Terminal，Zsh 与 CLI 不受影响。不要从博客复制不明的 `curl | bash`，也不要为了终端外观以 root 身份运行未知脚本。需要维护 Ghostty 配置时再打开 [[Ghostty 常用配置与 Shell 集成]]。
 
-1. 优先检查当前 Ubuntu 版本和已配置的受信任仓库是否提供 Ghostty；
-2. 在 Ghostty 官方“Binaries and Packages”页面核对该包由谁构建与维护；
-3. 只有明确接受维护与供应链风险时，才采用官方页面列出的社区 Ubuntu 包；
-4. 不从博客复制不明的一行 `curl | bash`，也不为了终端外观以 root 身份运行未知脚本；
-5. 没有合适来源时继续使用 GNOME Terminal，命令行部分完全不受影响。
+## 最终完成标准
 
-本文不固定抄写社区 Ubuntu 安装脚本，因为它不是 Ghostty 官方构建产物，维护方式也可能变化。需要跨机器维护 Ghostty 配置时，再按 [[Ghostty 常用配置与 Shell 集成]] 创建、模拟和验证独立 package；不要把可选 GUI 安装重新混入已经验证的基础 Zsh 提交。
+1. 原始 Bash/Zsh 配置与历史有通过权限和文件检查的私密备份；
+2. 每项旧 Bash 候选行为都有迁移、由新基线替代、继续保留或明确放弃的结论，没有悬空清单；
+3. Zsh、Atuin 与 Starship 的受管目标在首次真实启动前已经由 Stow 部署，启动后仍指向 `$HOME/.dotfiles`；local 文件是真实私有文件；
+4. 新登录与适用的 SSH 非交互场景都通过，账号登录 Shell、`$SHELL` 和当前进程的差异已理解；
+5. dotfiles 至少有一个已知可用提交，历史与同步操作发生在该基线之后。
+
+需要更新、排障或回退时打开 [[现代终端环境更新、验证与回退]]；需要深入理解启动文件、平台拆分或插件顺序时打开 [[Zsh 与 Antidote 跨机器配置管理]]。
 
 ## 官方参考资料
 
 - [Ubuntu Server：软件包管理](https://ubuntu.com/server/docs/how-to/software/package-management/)
-- [Ubuntu Server：命令行与 Shell 环境变量](https://ubuntu.com/server/docs/tutorial/cli-in-depth/)
 - [Ubuntu Manpage：`chsh` 修改登录 Shell](https://manpages.ubuntu.com/manpages/noble/man1/chsh.1.html)
-- [Ghostty：预编译二进制与 Linux 包来源说明](https://ghostty.org/docs/install/binary)
-- [Ghostty：Linux 平台说明](https://ghostty.org/docs/linux)
 - [GNU Bash：启动文件](https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files.html)
 - [GNU Bash：历史记录机制](https://www.gnu.org/software/bash/manual/html_node/Bash-History-Facilities.html)
 - [Zsh：启动文件说明](https://zsh.sourceforge.io/Doc/Release/Files.html)
+- [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)
 - [Antidote：官方安装与使用说明](https://antidote.sh/)
 - [Starship：官方安装指南](https://starship.rs/guide/)
-- [Atuin：官方安装说明](https://docs.atuin.sh/cli/guide/installation/)
-- [Atuin：完整 setup 脚本源码](https://github.com/atuinsh/atuin/blob/main/install.sh)
 - [Atuin：release 二进制安装器](https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh)
 - [Atuin：导入已有 Shell 历史](https://docs.atuin.sh/main/reference/import/)
 - [zoxide：官方安装与 fzf 版本要求](https://github.com/ajeetdsouza/zoxide)
 - [fzf：官方安装与 Shell integration](https://github.com/junegunn/fzf)
-- [GNU Stow：官方手册](https://www.gnu.org/software/stow/manual/stow.html)
+- [Ghostty：预编译二进制与 Linux 包来源说明](https://ghostty.org/docs/install/binary)
