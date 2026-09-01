@@ -12,7 +12,7 @@ tags:
   - Atuin
   - 命令历史
 created: 2026-07-19T16:33:48
-updated: 2026-08-31T13:18:23
+updated: 2026-08-31T15:17:38
 ---
 
 Atuin 将命令、执行时间、工作目录、退出状态和耗时保存在本地数据库中，并提供比普通 Shell 历史更容易检索的界面。本方案把它作为 **local-first 的命令历史工具**：不注册账号也能完整使用，跨机器同步是后续按需启用的可选能力。
@@ -38,6 +38,9 @@ Atuin 导入旧历史后，原来的 Zsh 历史文件仍会继续更新。不要
 
 Atuin 不只是读取配置：当配置目录或 `config.toml` 不存在时，加载设置的命令可能创建目录并写入示例配置。因此，如果该文件准备由 Stow 管理，不能先运行 `atuin info`、`atuin doctor`、`atuin init` 或真实交互式 Zsh。
 
+> [!info] 配置语义核对范围
+> 本节于 2026-08-31 按 [Atuin v18.20.1](https://github.com/atuinsh/atuin/releases/tag/v18.20.1) 源码和官方 `main` 文档核对了同步、匹配方式、过滤范围、workspace 和有效配置查询。资料核对不表示任何具体机器已经运行或验证这套配置。
+
 主线已经完成这一顺序；单独新增 Atuin 软件包时，在仓库中创建或编辑配置源：
 
 ~~~bash
@@ -48,24 +51,38 @@ git -C "$DOTFILES_DIR" status --short --branch
 mkdir -p "${atuin_source%/*}" "$HOME/.config/atuin"
 ~~~
 
-将下面的最小配置保存到 `$DOTFILES_DIR/atuin/.config/atuin/config.toml`：
+将下面的统一 local-first 受管基线保存到 `$DOTFILES_DIR/atuin/.config/atuin/config.toml`。平台安装主线与迁移主线有意使用相同的有效配置；它不是等待后续替换的临时最小文件：
 
 ~~~toml
-# 默认只使用本地数据库；决定启用同步后再改为 true。
+# 不自动同步历史；需要跨机器同步时再改为 true，或手动运行 `atuin sync`。
+# 这不关闭由 update_check 单独控制的版本更新检查。
 auto_sync = false
 
-# 搜索结果先回到命令行编辑，不直接执行历史命令。
+# 选中历史后先回填到 Shell 命令行，便于检查或编辑，不直接执行。
 enter_accept = false
 
+# 使用精简界面；可改为 auto（按终端高度切换）或 full（完整界面）。
 style = "compact"
+
+# 限制界面最多占 20 行；设为 0 时使用全部可用高度。
 inline_height = 20
+
+# 使用模糊匹配搜索命令内容；它决定“怎样匹配”，不决定“搜索哪些历史”。
+# 在搜索界面可按 Ctrl-S 临时循环其他匹配模式。
+search_mode = "fuzzy"
+
+# 默认先搜索全部历史；当前还支持 host、session、directory、workspace 和 session-preload。
+# Ctrl-R 循环的是 search.filters 中启用的过滤范围；本基线不覆盖该列表。
 filter_mode = "global"
+
+# 启用 workspace 过滤能力；它不会把默认过滤范围从 global 改为 workspace。
+# 不在 Git 仓库时，workspace 模式会被跳过。
 workspaces = true
 
-# 保留 Atuin 内置的常见秘密模式过滤。
+# 启用 Atuin 内置的凭据格式过滤；它只是安全网，不能覆盖所有秘密格式。
 secrets_filter = true
 
-# 按自己的实际命令扩展；这些是正则表达式。
+# history_filter 使用正则表达式；按自己的实际命令扩展。
 history_filter = [
   "^export .*(_TOKEN|_PASSWORD|_SECRET)=",
   "^curl .*Authorization:",
@@ -74,6 +91,10 @@ history_filter = [
 # 如需排除整个目录，取消注释并替换成真实的绝对路径。
 # cwd_filter = ["^/absolute/path/to/private-workspace"]
 ~~~
+
+`search_mode` 决定输入文字怎样匹配历史，`filter_mode` 决定打开界面时先搜索哪一部分历史；`workspaces = true` 只是让 workspace 成为可用范围。这三项分别控制匹配算法、初始范围和范围能力，不是互相覆盖的同一开关。
+
+这里的 local-first 表示历史默认不自动同步，不表示 Atuin 完全离线。若环境明确禁止 Atuin 发起更新检查，再单独设置 `update_check = false`；不要仅因为关闭同步就默认加入它。
 
 已有 `~/.config/atuin/config.toml` 时先停止并判断它的来源：若是普通文件，先在仓库外备份、检查私有路径并与配置源比较，不直接覆盖，也不使用 `stow --adopt`。确认目标可由新源接管后，先模拟再部署：
 
@@ -193,8 +214,8 @@ unset legacy_history_file sanitized_history
 
 在新终端按 `Ctrl-R` 打开 Atuin：
 
-- 输入任意片段进行模糊搜索。
-- 在搜索界面再次按 `Ctrl-R`，可轮换全局、主机、会话、目录等过滤范围。
+- 输入任意片段，默认按 `search_mode = "fuzzy"` 进行模糊匹配；按 `Ctrl-S` 可临时循环其他匹配方式。
+- 在搜索界面再次按 `Ctrl-R`，可循环 `search.filters` 中启用的全局、主机、会话、目录等过滤范围。
 - 按 `Tab` 将选中的命令带回命令行编辑；本方案还设置了 `enter_accept = false`，避免误执行旧命令。
 - 可直接运行 `atuin search <关键词>` 做非快捷键搜索。
 
@@ -249,9 +270,15 @@ atuin doctor
 
 ~~~zsh
 atuin --version
+atuin config get auto_sync --verbose
+atuin config get search_mode --verbose
+atuin config get filter_mode --verbose
+atuin config get workspaces --verbose
 atuin doctor
 bindkey '^R'
 ~~~
+
+`atuin config get ... --verbose` 同时帮助区分配置文件中的值与叠加默认值、环境变量后的有效值。本基线预期上述四项分别解析为 `false`、`fuzzy`、`global` 和 `true`；若文件值与有效值不同，先检查环境变量和实际加载的配置路径。
 
 再执行一条无副作用的测试命令，按 `Ctrl-R` 搜索其中的唯一文本。若 `Ctrl-R` 打开 fzf 或行为反复变化，说明 fzf 与 Atuin 都绑定了同一按键，回到 [[zoxide 与 fzf 导航和模糊查找]] 只保留一个初始化顺序。
 
@@ -271,8 +298,10 @@ Atuin 默认把数据库、密钥和 session 放在 `~/.local/share/atuin`，除
 - [Atuin：官方 release](https://github.com/atuinsh/atuin/releases)
 - [Atuin：导入旧历史](https://docs.atuin.sh/cli/guide/import/)
 - [Atuin：Shell 集成与 IDE 排障](https://docs.atuin.sh/cli/guide/shell-integration/)
-- [Atuin：按键配置](https://docs.atuin.sh/cli/configuration/key-binding/)
-- [Atuin：配置、过滤与数据路径](https://docs.atuin.sh/cli/configuration/config/)
+- [Atuin：按键配置](https://docs.atuin.sh/main/configuration/key-binding/)
+- [Atuin：配置、过滤与数据路径](https://docs.atuin.sh/main/configuration/config/)
+- [Atuin：高级搜索与过滤范围](https://docs.atuin.sh/main/guide/advanced-usage/)
+- [Atuin：查询有效配置](https://docs.atuin.sh/main/reference/config/)
 - [Atuin：可选同步与密钥边界](https://docs.atuin.sh/cli/guide/sync/)
 - [Atuin：doctor 命令](https://docs.atuin.sh/cli/reference/doctor/)
 - [Atuin：设置加载与缺失配置创建逻辑](https://github.com/atuinsh/atuin/blob/main/crates/atuin-client/src/settings.rs#L1465-L1533)

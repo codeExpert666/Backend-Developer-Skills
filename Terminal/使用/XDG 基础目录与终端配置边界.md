@@ -11,7 +11,7 @@ tags:
   - Zsh
   - Dotfiles
 created: 2026-08-30T22:24:37
-updated: 2026-08-31T13:18:23
+updated: 2026-08-31T17:03:11
 ---
 
 平台搭建主线默认使用 XDG 约定的默认目录。只有在你想理解路径边界、修改默认目录，或排查“程序到底读了哪里”时，才需要打开这篇笔记。
@@ -120,6 +120,13 @@ $HOME/
 
 即使 dotfiles 是私有仓库，也不应把它当作密钥仓库。
 
+“某个文件承担 cache 职责”不表示程序会自动遵循 `XDG_CACHE_HOME`。两个常见默认行为尤其容易把生成文件写回配置目录：
+
+- 裸 `compinit` 默认把 `.zcompdump` 写到 `$ZDOTDIR` 或 `$HOME`；本方案使用 `compinit -d "${XDG_CACHE_HOME:-$HOME/.cache}/..."` 显式改写目标，并在 Ubuntu 上通过早期 `skip_global_compinit` 防止系统级 `zshrc` 抢先初始化；
+- 单参数 `antidote load "$ZDOTDIR/.zsh_plugins.txt"` 会从清单名推导相邻的 `.zsh_plugins.zsh`；本方案把 XDG cache 中的静态脚本路径作为第二个参数传入。
+
+因此，在 `$ZDOTDIR` 看到普通 `.zcompdump` 或 `.zsh_plugins.zsh` 时，结论不是“它可以进入 dotfiles”，而是“至少有一次初始化仍走默认生成路径”。应先定位系统级与用户级调用，再移动可重建旧文件；完整顺序和检查命令见 [[Zsh 与 Antidote 跨机器配置管理]]。
+
 ## 6. 使用非默认 XDG 目录前如何判断
 
 先观察变量和启动文件中已有的设置：
@@ -161,4 +168,6 @@ readlink "$HOME/.zshenv"
 
 - [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/)
 - [Zsh Startup Files](https://zsh.sourceforge.io/Doc/Release/Files.html#Startup_002fShutdown-Files)
+- [Zsh Completion System](https://zsh.sourceforge.io/Doc/Release/Completion-System.html)
+- [Antidote Commands](https://antidote.sh/commands)
 - [GNU Stow Manual](https://www.gnu.org/software/stow/manual/stow.html)

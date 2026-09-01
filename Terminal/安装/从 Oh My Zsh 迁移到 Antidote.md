@@ -12,7 +12,7 @@ tags:
   - Oh-My-Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-08-31T13:18:23
+updated: 2026-08-31T17:03:11
 ---
 
 本文把正在使用的 Oh My Zsh 迁移为 Zsh + Antidote + Starship + Atuin + zoxide + fzf，同时建立或接入普通 Git dotfiles，并由 GNU Stow 部署。单看本文即可完成盘点、并行重建、切换、提交和回退。
@@ -355,19 +355,31 @@ zsh-users/zsh-syntax-highlighting kind:clone
 将以下内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zshrc`：
 
 ```zsh
+# 使用 Emacs 风格键位，供后续 ZLE 插件在同一套基础键位映射上绑定按键。
 bindkey -e
+
+# 原生 Zsh 历史写入 XDG state，作为 Atuin 之外的本地回退。
 zsh_state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/zsh"
 mkdir -p "$zsh_state_dir"
 HISTFILE="$zsh_state_dir/history"
+
+# 内存历史最多保留 50000 条，磁盘历史文件长期保留 20000 条。
 HISTSIZE=50000
 SAVEHIST=20000
+
+# 多个会话退出时追加历史；需要裁剪时优先淘汰有副本的旧记录。
 setopt append_history
 setopt hist_expire_dups_first
+
+# 原生历史跳过相邻重复和空格开头的命令，并压缩无意义的多余空白。
 setopt hist_ignore_dups
 setopt hist_ignore_space
 setopt hist_reduce_blanks
+
+# 临时路径变量不再需要，避免留在当前 Shell 的全局参数中。
 unset zsh_state_dir
 
+# 按“跨平台共享 → 当前平台 → 本机私有”的顺序加载可选配置；文件不存在时跳过，后加载内容可以覆盖前面的默认值。
 [[ -r "$ZDOTDIR/common.zsh" ]] && source "$ZDOTDIR/common.zsh"
 case "$OSTYPE" in
   darwin*) [[ -r "$ZDOTDIR/macos.zsh" ]] && source "$ZDOTDIR/macos.zsh" ;;
@@ -375,39 +387,72 @@ case "$OSTYPE" in
 esac
 [[ -r "$ZDOTDIR/local.zsh" ]] && source "$ZDOTDIR/local.zsh"
 
+# 初始化 Zsh 自带的可编程补全，让 Tab 能根据当前命令和参数位置提供候选项。
+# 补全转储是可重新生成的初始化缓存；按 Zsh 版本分文件，避免升级后复用旧结果。
 zcompdump="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
 mkdir -p "${zcompdump:h}"
+
+# 从 Zsh 函数搜索路径自动加载 compinit，并用指定转储文件初始化当前会话的补全系统。
 autoload -Uz compinit
 compinit -d "$zcompdump"
+
+# 只清理临时路径变量，磁盘上的补全转储仍保留供下次启动复用。
 unset zcompdump
 
+# Antidote 本体放在 XDG data；可重新下载的插件仓库与生成脚本放在 XDG cache。
 export ANTIDOTE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/antidote"
 antidote_dir="${XDG_DATA_HOME:-$HOME/.local/share}/antidote"
 plugin_manifest="$ZDOTDIR/.zsh_plugins.txt"
 plugin_static="${XDG_CACHE_HOME:-$HOME/.cache}/antidote/zsh_plugins.zsh"
+
+# 入口可读时把 Antidote 管理函数加载到当前 Shell，再处理共享插件清单。
 if [[ -r "$antidote_dir/antidote.zsh" ]]; then
   source "$antidote_dir/antidote.zsh"
+
+  # 在自动建议插件加载前设置低亮度显示样式。
   ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
+
+  # 生成脚本是可重建缓存；显式放入 XDG cache，避免在受管配置目录旁生成未跟踪文件。
   mkdir -p "${plugin_static:h}"
+
+  # 下载缺失的插件仓库并加载普通插件；kind:clone 项只下载，留待后文手动加载。
   antidote load "$plugin_manifest" "$plugin_static"
 else
+  # 本体缺失时只向标准错误报告，保留无插件但仍可使用的基础 Zsh。
   print -u2 "Antidote is missing: $antidote_dir"
 fi
+
+# 只清理本体、清单与生成脚本路径变量；ANTIDOTE_HOME 继续供 Antidote 的后续命令使用。
 unset antidote_dir plugin_manifest plugin_static
 
+# 仅在 fzf 存在且支持 --zsh 时加载按键绑定与模糊补全，避免缺失或旧版本打断 Shell 启动。
+# 保留 Ctrl-T 文件选择；禁用 fzf 的 Ctrl-R 与 Alt-C，分别由 Atuin 和 zoxide 的 zi 承担历史搜索与目录选择。
 if (( $+commands[fzf] )) && fzf --zsh >/dev/null 2>&1; then
   FZF_CTRL_R_COMMAND= FZF_ALT_C_COMMAND= source <(fzf --zsh)
 fi
 
+# 若已安装 Atuin，则加载用于记录命令的钩子与历史搜索按键，并由它接管 Ctrl-R。
+# 不让 Atuin 覆盖上箭头或绑定 ? 的 AI 入口，使原有历史翻阅与普通输入行为保持不变。
 (( $+commands[atuin] )) && eval "$(atuin init zsh --disable-up-arrow --disable-ai)"
+
+# 若已安装 zoxide，则在 compinit 后加载用于记录目录访问的钩子、z/zi 命令及补全。
+# z 按访问记录排名跳转，zi 通过 fzf 交互选择；未使用 --cmd cd，因此不替换原生 cd。
 (( $+commands[zoxide] )) && eval "$(zoxide init zsh)"
+
+# 若已安装 Starship，则加载提示符钩子，按当前目录、Git 状态和上一条命令结果渲染提示符。
+# 它只接管提示符；放在其他提示符配置之后，避免初始化结果再次被覆盖。
 (( $+commands[starship] )) && eval "$(starship init zsh)"
 
+# 语法高亮在插件清单中以 kind:clone 只下载；Antidote 可用时再查询其本地目录。
 if (( $+functions[antidote] )); then
   zsh_highlight_root="$(antidote path zsh-users/zsh-syntax-highlighting 2>/dev/null)"
+
+  # 主脚本可读时才最后手动加载，使高亮钩子在其他 Zsh 行编辑器（ZLE）组件之后注册。
   if [[ -r "$zsh_highlight_root/zsh-syntax-highlighting.zsh" ]]; then
     source "$zsh_highlight_root/zsh-syntax-highlighting.zsh"
   fi
+
+  # 清理仅用于定位插件的临时变量。
   unset zsh_highlight_root
 fi
 ```
@@ -452,38 +497,84 @@ done
 unset component_target
 ```
 
-已有普通文件时，使用第 2 节的私密备份，逐项把经过审查的通用设置写入对应仓库源；机器路径、账号和秘密不迁入 Git。对尚无可复用源的组件，使用下面的最小内容分别建立 `$DOTFILES_DIR/atuin/.config/atuin/config.toml` 与 `$DOTFILES_DIR/starship/.config/starship.toml`；已有可信源则保留并审查，不覆盖：
+已有普通文件时，使用第 2 节的私密备份，逐项把经过审查的通用设置写入对应仓库源；机器路径、账号和秘密不迁入 Git。对尚无可复用源的组件，Atuin 使用下面统一的 local-first 受管基线，Starship 使用最小启动覆盖配置，分别建立 `$DOTFILES_DIR/atuin/.config/atuin/config.toml` 与 `$DOTFILES_DIR/starship/.config/starship.toml`；已有可信源则保留并审查，不覆盖：
 
 ```toml
 # Atuin: atuin/.config/atuin/config.toml
+# 即使已经登录 Atuin 账户，也不自动同步；需要同步时可手动运行 `atuin sync`。
+# 若希望 Atuin 定期自动同步，可改为 true；更新检查由 update_check 单独控制。
 auto_sync = false
+
+# false：选中历史后先回填到 Shell 命令行，便于检查或编辑，再按 Enter 执行。
+# true：在 Atuin 界面中按 Enter 会立即执行选中的命令。
 enter_accept = false
+
+# 使用精简界面；可改为 auto（按终端高度切换）或 full（完整界面）。
 style = "compact"
+
+# 限制界面最多占 20 行；调大可同时显示更多内容，设为 0 则使用全部可用高度。
 inline_height = 20
+
+# 使用模糊匹配搜索命令内容；它决定“怎样匹配”，不决定“搜索哪些历史”。
+# 在搜索界面可按 Ctrl-S 临时循环其他匹配模式。
+search_mode = "fuzzy"
+
+# 打开交互搜索时先检索全部历史；当前还支持 host、session、directory、workspace 和 session-preload。
+# 进入界面后可用 Ctrl-R 循环 search.filters 中启用的过滤范围；本基线不覆盖该列表。
 filter_mode = "global"
+
+# 启用 workspace 过滤能力：在 Git 仓库中可检索整个仓库树，而不只当前目录。
+# 它不会改变上面的默认过滤范围；不在 Git 仓库时 workspace 模式会被跳过。
 workspaces = true
+
+# 启用 Atuin 内置的凭据格式过滤；它只是安全网，不能覆盖所有秘密格式。
 secrets_filter = true
 
+# history_filter 使用正则表达式；^ 和 $ 分别限定命令开头和结尾。
+# 自定义正则只阻止之后匹配的命令入库，不会自动删除既有历史。
+# 调整规则后若要清理旧记录，应先用 `atuin history prune --dry-run` 预览影响。
 history_filter = [
+  # 排除以 export 开头、变量名以 _TOKEN、_PASSWORD 或 _SECRET 结尾的赋值。
   "^export .*(_TOKEN|_PASSWORD|_SECRET)=",
+  # 排除以 curl 开头且包含 Authorization: 请求头的命令。
   "^curl .*Authorization:",
 ]
 ```
 
+Atuin 在平台主线、迁移主线和 [[Atuin 命令历史管理]] 中有意使用同一套最终基线，不存在等待后续替换的另一份“完整配置”。`search_mode = "fuzzy"` 固定文字匹配方式，`filter_mode = "global"` 固定初始搜索范围，`workspaces = true` 只启用 workspace 范围能力。
+
 ```toml
 # Starship: starship/.config/starship.toml
+# 供支持 JSON Schema 的编辑器补全键名并检查值类型；这行不定义提示符外观。
+# 键名包含 $，不属于 TOML 裸键允许的字符，因此必须用引号包住。
 "$schema" = "https://starship.rs/config-schema.json"
 
+# 不在相邻两次提示符之间额外插入空行，使终端输出更紧凑；需要分隔感时可改为 true。
 add_newline = false
 
+# hostname 模块负责显示系统主机名。
 [hostname]
+
+# 仅在 SSH 会话中显示主机名；若本地终端也需要显示，可改为 false。
 ssh_only = true
+
+# $hostname 和 $style 是 Starship 的格式变量，不由 Shell 展开。
+# 方括号包住要显示的主机名，圆括号应用模块样式；末尾空格用于分隔后续模块。
+# 当前不显示默认的 SSH 图标和连接词；若要换色，可在本表增加 style 配置。
 format = "[$hostname]($style) "
 
+# character 模块显示命令输入位置旁的提示符，并根据上一条命令是否成功切换样式。
 [character]
+
+# 方括号内的 > 是实际显示内容，圆括号内是样式；这些括号本身不会显示。
+# 上一条命令退出码为 0 时显示粗体绿色 >。
 success_symbol = "[>](bold green)"
+
+# 上一条命令退出码非 0 时显示粗体红色 >；需要更强区分时可调整符号或样式。
 error_symbol = "[>](bold red)"
 ```
+
+这里的 Starship 内容是“最小启动覆盖配置”：“最小”指覆盖项少；由于没有设置顶层 `format`，其他模块仍遵循 Starship 默认的 `$all` 格式和各自检测条件。已有可信 Starship 源时继续保留并审查，不用这段基线覆盖。迁移完成并形成第 10 节的已知良好提交后，如需显式限制后端模块或采用 Tokyo Night，分别选择 [[Starship 提示符配置#4. 可选：用显式 format 限定后端开发模块|显式后端开发配置]] 或 [[Starship 提示符配置#5. 从启动基线切换到 Tokyo Night 预设|Tokyo Night 派生配置]] 整体替换仓库源，不要直接拼接多份完整配置。
 
 这一步只准备配置源，不运行 `atuin info`、`atuin doctor`、`starship explain` 或真实 Zsh。目标普通文件的移动与 Stow 接管统一放在下一节处理。
 
@@ -532,20 +623,41 @@ done
 unset managed_path
 ```
 
-显式把 `ZDOTDIR` 只传给测试进程：
+显式把 `ZDOTDIR` 和 Ubuntu 系统级补全跳过开关只传给测试进程：
 
 ```zsh
-env ZDOTDIR="$HOME/.config/zsh" zsh -lic '
+env skip_global_compinit=1 ZDOTDIR="$HOME/.config/zsh" zsh -lic '
   printf "parallel-config-loaded\n"
   command -v starship atuin zoxide fzf
   (( $+functions[antidote] )) || exit 1
   bindkey "^R"
   type z
   type zi
+
+  cache_root="${XDG_CACHE_HOME:-$HOME/.cache}"
+  for cache_path in \
+    "$cache_root/zsh/zcompdump-$ZSH_VERSION" \
+    "$cache_root/antidote/zsh_plugins.zsh"; do
+    [[ -s "$cache_path" ]] || {
+      print -u2 "STOP: expected cache missing or empty: $cache_path"
+      exit 1
+    }
+  done
+
+  for unexpected_path in \
+    "$ZDOTDIR/.zcompdump" \
+    "$ZDOTDIR/.zsh_plugins.zsh"; do
+    [[ ! -e "$unexpected_path" ]] || {
+      print -u2 "STOP: generated file leaked into candidate ZDOTDIR: $unexpected_path"
+      exit 1
+    }
+  done
 '
 ```
 
-该命令不会修改账号登录 Shell，也不会替换当前 Oh My Zsh 会话，但会真实运行组件初始化并在仓库外创建合法的 data、state 或 cache。执行后再次检查上述受管目标仍是链接，并逐项验证第 3 节决定保留的 alias、函数、SDK 和 PATH；遗漏就回到第 6 节修正。
+Ubuntu 的系统级 `/etc/zsh/zshrc` 早于候选用户 `.zshrc` 执行；若并行测试只临时传入 `ZDOTDIR`，裸 `compinit` 可能先在候选目录生成 `.zcompdump`。`skip_global_compinit=1` 只关闭本次测试进程的系统级初始化，候选 `.zshrc` 仍会执行带 `-d` 的补全初始化；没有读取该开关的平台不受影响。
+
+该命令不会修改账号登录 Shell，也不会替换当前 Oh My Zsh 会话，但会真实运行组件初始化并在仓库外创建合法的 data、state 或 cache。执行后再次检查上述受管目标仍是链接，并逐项验证第 3 节决定保留的 alias、函数、SDK 和 PATH；遗漏就回到第 6 节修正。若发现候选目录已有生成文件，先定位旧调用并把确认可重建的文件移入第 2 节备份，不要直接删除后继续。
 
 ## 8. 并行测试通过后才切换根 `.zshenv`
 
@@ -553,6 +665,10 @@ env ZDOTDIR="$HOME/.config/zsh" zsh -lic '
 
 ```zsh
 export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
+
+# Ubuntu 的系统级 zshrc 可能先调用 compinit；本配置在用户 .zshrc 中统一初始化并把转储写入 XDG cache。
+# 该开关不需要导出；未使用它的平台会忽略这个普通 Shell 参数。
+skip_global_compinit=1
 
 typeset -U path PATH
 [[ -d /usr/local/bin ]] && path=(/usr/local/bin $path)
@@ -563,7 +679,7 @@ typeset -U path PATH
 export PATH
 ```
 
-把第 3 节确认“SSH 非交互命令也必须看到”的额外共享 PATH 现在加入；主题、插件、别名和 SDK 交互初始化不放进 `.zshenv`。
+把第 3 节确认“SSH 非交互命令也必须看到”的额外共享 PATH 现在加入；主题、插件、别名和 SDK 交互初始化不放进 `.zshenv`。`skip_global_compinit` 是必须早于系统级交互启动文件生效的无副作用开关，因此不能延后到 `linux.zsh` 或用户 `.zshrc`。
 
 先检查语法。若旧根 `.zshenv` 是普通文件，把它移动到**第 2 节实际输出且已验证**的备份目录：
 
@@ -630,7 +746,28 @@ type zi
 starship --version
 atuin doctor
 fzf --version
-zsh -lic 'printf "startup-ok\n"'
+zsh -lic '
+  cache_root="${XDG_CACHE_HOME:-$HOME/.cache}"
+  for cache_path in \
+    "$cache_root/zsh/zcompdump-$ZSH_VERSION" \
+    "$cache_root/antidote/zsh_plugins.zsh"; do
+    [[ -s "$cache_path" ]] || {
+      print -u2 "STOP: expected cache missing or empty: $cache_path"
+      exit 1
+    }
+  done
+
+  for unexpected_path in \
+    "$ZDOTDIR/.zcompdump" \
+    "$ZDOTDIR/.zsh_plugins.zsh"; do
+    [[ ! -e "$unexpected_path" ]] || {
+      print -u2 "STOP: generated file leaked into ZDOTDIR: $unexpected_path"
+      exit 1
+    }
+  done
+
+  print "startup-ok"
+'
 ```
 
 人工确认：
@@ -773,12 +910,16 @@ exec env -u ZDOTDIR zsh -l
 ## 进一步理解
 
 - [[Zsh 与 Antidote 跨机器配置管理]]：启动顺序、平台拆分与插件语义。
+- [[Starship 提示符配置]]：启动覆盖、显式模块清单、Tokyo Night 与性能验证。
 - [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]：软件包、冲突、秘密与日常生命周期。
 - [[现代终端环境更新、验证与回退]]：迁移后的更新和故障定位。
 
 ## 官方参考资料
 
 - [Oh My Zsh：官方安装、配置与卸载说明](https://github.com/ohmyzsh/ohmyzsh)
+- [Zsh：启动文件说明](https://zsh.sourceforge.io/Doc/Release/Files.html)
+- [Zsh：`compinit` 转储文件与 `-d` 参数](https://zsh.sourceforge.io/Doc/Release/Completion-System.html)
+- [Debian/Ubuntu：系统级 `zshrc` 与 `skip_global_compinit`](https://sources.debian.org/src/zsh/5.9-8/debian/zshrc/)
 - [Antidote：官方安装、插件清单与 snapshot](https://antidote.sh/)
 - [Antidote：选择性使用 Zsh 框架子插件](https://antidote.sh/using-zsh-frameworks)
 - [zsh-syntax-highlighting：官方加载顺序说明](https://github.com/zsh-users/zsh-syntax-highlighting)

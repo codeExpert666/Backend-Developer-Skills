@@ -12,7 +12,7 @@ tags:
   - Antidote
   - Dotfiles
 created: 2026-07-19T16:35:26
-updated: 2026-08-31T13:18:23
+updated: 2026-08-31T17:03:11
 ---
 
 这篇专题解释 Zsh 启动文件的读取边界、跨平台拆分方式、Antidote 清单语义，以及补全、按键、提示符和语法高亮为什么必须按特定顺序加载。
@@ -45,20 +45,30 @@ printf 'ZDOTDIR=%s\n' "${ZDOTDIR-}"
 
 账号登录 Shell、继承的 `$SHELL`、当前进程和 Zsh 自己的选项是不同状态，不能互相代替。
 
-Zsh 还会在用户文件之前读取相应的系统级启动文件；其中 `/etc/zshenv` 总会读取，具体系统可能把全局文件放在编译时指定的其他目录。个人 dotfiles 只管理用户文件，不能把系统级副作用误判成仓库配置。
+Zsh 还会读取相应的系统级启动文件。以交互式 Shell 为例，核心顺序是：
 
-## 2. `.zshenv` 只负责所有 Zsh 都需要的环境
+```text
+系统级 zshenv → 用户 .zshenv → 系统级 zshrc → 用户 .zshrc
+```
+
+登录 Shell 还会在中间加入系统级与用户级 `.zprofile`，并在交互配置之后读取 `.zlogin`。具体系统可能把全局文件放在编译时指定的其他目录；个人 dotfiles 只管理用户文件，不能把系统级副作用误判成仓库配置。
+
+## 2. `.zshenv` 只负责必须最早生效的最小设置
 
 Zsh 尚未知道 `ZDOTDIR` 时，会先从 `$HOME/.zshenv` 取得入口：
 
 ```zsh
 export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
+
+# Ubuntu 的系统级 zshrc 可能先调用 compinit；用户 .zshrc 将统一初始化并把转储写入 XDG cache。
+skip_global_compinit=1
 ```
 
-后续用户文件才改到 `$ZDOTDIR`。因此 `.zshenv` 适合：
+后续用户文件才改到 `$ZDOTDIR`。用户 `.zshenv` 又早于系统级交互 `zshrc`，因此它也负责必须在系统级后续文件之前生效、且没有输出或网络副作用的最小开关。适合放入：
 
 - `ZDOTDIR`；
 - SSH 非交互命令、脚本和 IDE 后端都必须看到的少量 PATH；
+- 经实际系统文件确认、必须早于系统级 `zshrc` 生效的控制开关，例如本方案的 `skip_global_compinit`；
 - 不输出文字、不访问网络、不会显著变慢的环境声明。
 
 不适合：
@@ -69,6 +79,14 @@ export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
 - 网络访问、自动更新和目录创建之外的副作用。
 
 添加 PATH 前先回答：`ssh host command` 或 `zsh -c` 是否真的必须找到这个命令？若只在登录终端使用，应移到 `.zprofile`；若只影响交互操作，应放进 `.zshrc` 的共享、平台或本机文件。
+
+Ubuntu 的 `/etc/zsh/zshrc` 可能提供 `skip_global_compinit` 并在该参数为空时执行裸 `compinit`。采用“用户 `.zshrc` 唯一初始化补全”的配置前，先核对真实机器：
+
+```sh
+grep -nE 'skip_global_compinit|compinit' /etc/zsh/zshrc 2>/dev/null
+```
+
+若系统文件提供这个开关，必须在根 `.zshenv` 设置；放进 `linux.zsh`、`local.zsh` 或用户 `.zshrc` 都太晚。它是当前 Zsh 进程中的普通参数，无需 `export`；未读取该参数的平台不受影响。
 
 `typeset -U path PATH` 能让 Zsh 把标量 `PATH` 与数组 `path` 关联，并去除重复元素。平台主线中的目录存在性判断则避免把不存在路径传播到每台机器。
 
@@ -211,6 +229,18 @@ antidote_is_macos() {
 3. 再运行 `autoload -Uz compinit` 与 `compinit`；
 4. 最后加载普通插件和交互工具。
 
+无论是否扩展 `fpath`，本方案都只允许一次主动 `compinit`，并显式把可重建转储写入 XDG cache：
+
+```zsh
+zcompdump="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
+mkdir -p "${zcompdump:h}"
+autoload -Uz compinit
+compinit -d "$zcompdump"
+unset zcompdump
+```
+
+裸 `compinit` 默认把 `.zcompdump` 写在启动文件目录，即 `$ZDOTDIR` 或 `$HOME`。如果配置目录同时出现 `.zcompdump`，而 XDG cache 中也有按版本命名的转储，通常说明系统级或另一份用户配置抢先初始化了一次。先搜索 `/etc/zsh/zshrc` 和用户启动文件中的所有调用，修正唯一所有者后再移动旧缓存，不能通过直接删除文件掩盖重复初始化。
+
 检查当前函数搜索路径与补全函数来源：
 
 ```zsh
@@ -289,8 +319,18 @@ env -i HOME="$HOME" PATH=/usr/bin:/bin /bin/zsh -c \
 
 zsh -lic '
   command -v starship atuin zoxide fzf
-  (( $+functions[antidote] ))
+  (( $+functions[antidote] )) || exit 1
   bindkey "^R"
+
+  cache_root="${XDG_CACHE_HOME:-$HOME/.cache}"
+  for cache_path in \
+    "$cache_root/zsh/zcompdump-$ZSH_VERSION" \
+    "$cache_root/antidote/zsh_plugins.zsh"; do
+    [[ -s "$cache_path" ]] || exit 1
+  done
+
+  [[ ! -e "$ZDOTDIR/.zcompdump" ]] || exit 1
+  [[ ! -e "$ZDOTDIR/.zsh_plugins.zsh" ]] || exit 1
 '
 ```
 
@@ -305,7 +345,9 @@ Zsh 启动文件、插件清单、common/platform 文件和有意保存的 snaps
 ## 官方参考资料
 
 - [Zsh：启动文件](https://zsh.sourceforge.io/Doc/Release/Files.html)
+- [Zsh：补全系统与 `compinit` 转储](https://zsh.sourceforge.io/Doc/Release/Completion-System.html)
 - [Zsh：选项](https://zsh.sourceforge.io/Doc/Release/Options.html)
+- [Debian/Ubuntu：系统级 `zshrc` 与 `skip_global_compinit`](https://sources.debian.org/src/zsh/5.9-8/debian/zshrc/)
 - [Antidote：安装、bundle 语法、条件与 snapshot](https://antidote.sh/)
 - [fzf：Zsh 集成](https://github.com/junegunn/fzf)
 - [Atuin：Shell Integration](https://docs.atuin.sh/cli/guide/shell-integration/)

@@ -10,7 +10,7 @@ tags:
   - GNU-Stow
   - Zsh
 created: 2026-08-30T22:24:37
-updated: 2026-08-31T13:18:23
+updated: 2026-08-31T17:03:11
 ---
 
 这条主线适用于：dotfiles 已经推送到可信远端，现在要在一台新 macOS 或 Ubuntu 上恢复同一套终端环境。单独阅读本文即可完成依赖安装、克隆、冲突处理、部署、验证和回退。
@@ -271,10 +271,10 @@ find "$DOTFILES_DIR" -mindepth 1 -maxdepth 2 \( -type f -o -type d \)
 git -C "$DOTFILES_DIR" ls-files
 ```
 
-确认源文件存在、没有提交历史或密钥，并从 README 与 `.zshrc` 共同推导本机的“启动依赖闭包”：
+确认源文件存在、没有提交历史或密钥，并从 README 与 `.zshrc` 共同推导本机的“启动依赖闭包”和生成文件位置：
 
 ```sh
-grep -nE 'atuin init|starship init|zoxide init|fzf --zsh' \
+grep -nE 'compinit|zcompdump|antidote[[:space:]]+load|plugin_static|atuin init|starship init|zoxide init|fzf --zsh' \
   "$DOTFILES_DIR/zsh/.config/zsh/.zshrc" 2>/dev/null || true
 
 for package_name in zsh atuin starship ghostty; do
@@ -284,9 +284,28 @@ done
 unset package_name
 ```
 
+Ubuntu 的系统级 `/etc/zsh/zshrc` 可能在用户 `.zshrc` 之前调用 `compinit`。若实际系统文件提供 `skip_global_compinit`，并且恢复出的用户 `.zshrc` 也负责初始化补全，就必须确认 dotfiles 的早期 `.zshenv` 已设置该开关；否则第一次真实启动就可能在 `$ZDOTDIR` 生成默认 `.zcompdump` 并重复初始化：
+
+```sh
+if [ -r /etc/zsh/zshrc ] \
+  && grep -q 'skip_global_compinit' /etc/zsh/zshrc \
+  && grep -Eq '^[[:space:]]*compinit([[:space:]]|$)' \
+    "$DOTFILES_DIR/zsh/.config/zsh/.zshrc"; then
+  if ! grep -Eq '^[[:space:]]*(typeset[[:space:]]+-g[[:space:]]+)?skip_global_compinit=1([[:space:]]*(#.*)?)?$' \
+    "$DOTFILES_DIR/zsh/.zshenv"; then
+    printf 'STOP: restored .zshenv does not disable the system compinit\n' >&2
+    false
+  fi
+fi
+```
+
+这项检查只在“系统会初始化、用户配置也会初始化”时触发；若仓库采用其他补全方案，应以 README、实际启动文件和系统文件共同裁定，不能为了通过检查盲目追加变量。
+
 若 `.zshrc` 会执行 `atuin init`，并且仓库声明 `config.toml` 由 Stow 管理，那么 `atuin` 必须在第一次真实 Zsh 之前部署；Starship 同理。macOS 桌面若要由仓库管理 Ghostty 配置，也必须在首次打开 Ghostty 前加入 `ghostty`。zoxide 数据库与 fzf Shell 生成代码不需要独立软件包。
 
 本套仓库的命令行闭包是 `zsh atuin starship`；macOS 桌面闭包是 `zsh atuin starship ghostty`。若克隆到的是其他布局，以已审查的 README 和启动文件为准；缺少被启动链依赖的受管配置包时先停止修复仓库，不要运行组件让它临时生成普通配置。
+
+如果恢复出的 `starship.toml` 使用 Nerd Font 或 Powerline 字形，字体属于新机器图形终端的外部依赖，不会随 Stow 链接自动恢复。应按仓库 README 安装其声明的字体并在 Ghostty 等终端中选中；通过 SSH 使用时，字形由显示会话的客户端终端负责，服务器端不需要安装 GUI 字体。字体与提示符配置的职责边界见 [[Starship 提示符配置#7. 字体与 Ghostty 的关系|Starship 的字体与 Ghostty 边界]]。
 
 ## 6. 先暴露冲突，再部署相同列表
 
@@ -414,9 +433,33 @@ zsh -lic '
   printf "shell=%s\nZDOTDIR=%s\n" "$ZSH_VERSION" "${ZDOTDIR-}"
   command -v starship atuin zoxide fzf
 '
+
+zsh_config_dir=$(zsh -c 'print -r -- "${ZDOTDIR:-$HOME}"')
+unexpected_generated=$(find "$zsh_config_dir" -maxdepth 1 -type f \
+  \( -name '.zcompdump*' -o -name '.zsh_plugins.zsh' \) \
+  -print -quit)
+
+if [ -n "$unexpected_generated" ]; then
+  printf 'STOP: generated file appeared in ZDOTDIR: %s\n' \
+    "$unexpected_generated" >&2
+  false
+fi
+unset unexpected_generated zsh_config_dir
 ```
 
-语法检查不执行启动逻辑；只有上述受管目标都确认是链接后，`zsh -lic` 才第一次经过登录与交互启动链。macOS 桌面还应在首次打开 Ghostty 前确认 `~/.config/ghostty/config.ghostty` 是链接。最后打开一个全新的 Ghostty 窗口或重新建立 SSH 连接，人工检查：
+真实启动成功后，再读取 Atuin 实际解析出的关键值，并让 Starship 解释当前目录会启用哪些模块：
+
+```sh
+atuin config get auto_sync --verbose
+atuin config get search_mode --verbose
+atuin config get filter_mode --verbose
+atuin config get workspaces --verbose
+starship explain
+```
+
+恢复主线不预设这些键必须取某个固定值：应把 `atuin config get` 的文件值与解析值、`starship explain` 的模块来源，与 dotfiles 仓库中的受管源和 README 声明逐项比较。若结果不同，先排查配置加载路径、环境变量或本机覆盖，不要为了追平本笔记而覆盖仓库已经选择的同步策略、搜索范围或提示符主题。
+
+语法检查不执行启动逻辑；只有上述受管目标都确认是链接后，`zsh -lic` 才第一次经过登录与交互启动链。随后的 `find` 不假设缓存文件的具体名称或版本，只阻止默认补全转储和 Antidote 静态脚本以普通文件形式落入配置目录；实际 cache 路径仍以仓库 `.zshrc` 与 README 的声明为准。macOS 桌面还应在首次打开 Ghostty 前确认 `~/.config/ghostty/config.ghostty` 是链接。最后打开一个全新的 Ghostty 窗口或重新建立 SSH 连接，人工检查：
 
 - 没有启动报错；
 - PATH 中没有重复且错误的安装来源；
@@ -480,6 +523,8 @@ macOS 桌面若实际部署过 `ghostty`，解除命令也必须在同一列表�
 
 - [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]：源、目标、package、冲突和秘密边界。
 - [[Zsh 与 Antidote 跨机器配置管理]]：启动文件与插件生成逻辑。
+- [[Atuin 命令历史管理]]：理解并调整搜索匹配、过滤范围、同步和历史恢复策略。
+- [[Starship 提示符配置]]：选择预设、字体依赖、模块来源与配置验证。
 - [[现代终端环境更新、验证与回退]]：日常更新和故障定位。
 
 ## 官方参考资料
@@ -487,5 +532,7 @@ macOS 桌面若实际部署过 `ghostty`，解除命令也必须在同一列表�
 - [Git clone documentation](https://git-scm.com/docs/git-clone)
 - [GNU Stow Manual](https://www.gnu.org/software/stow/manual/stow.html)
 - [Zsh Startup Files](https://zsh.sourceforge.io/Doc/Release/Files.html#Startup_002fShutdown-Files)
+- [Zsh Completion System：`compinit` 转储文件](https://zsh.sourceforge.io/Doc/Release/Completion-System.html)
+- [Debian/Ubuntu system `zshrc`：`skip_global_compinit`](https://sources.debian.org/src/zsh/5.9-8/debian/zshrc/)
 - [Antidote Documentation](https://antidote.sh/)
 - [Homebrew Installation](https://docs.brew.sh/Installation)
