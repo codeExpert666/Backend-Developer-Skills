@@ -11,7 +11,7 @@ tags:
   - Dotfiles
   - GNU-Stow
 created: 2026-08-28T16:05:55
-updated: 2026-08-31T13:18:23
+updated: 2026-09-01T11:42:21
 ---
 
 这篇专题回答 dotfiles 的稳定问题：配置源在哪里、Stow 把它部署到哪里、Git 跟踪什么、冲突如何处理、秘密与运行数据为什么必须留在仓库之外。
@@ -59,7 +59,7 @@ Stow 只能为不存在的目标创建链接，或维护已经属于正确软件
 | --- | --- | --- |
 | Zsh | `.zshenv`、`.zprofile`、`.zshrc`、插件清单 | 部署 `zsh` 并验证链接 |
 | Atuin | `~/.config/atuin/config.toml` | 先部署 `atuin`，再运行 `atuin info`、`atuin doctor` 或 `atuin init` |
-| Starship | `~/.config/starship.toml` | 先部署 `starship`，再运行完整交互 Zsh 或 `starship explain` |
+| Starship | 默认 `~/.config/starship.toml`，以及仓库声明的备用 profiles | 先部署完整 `starship` package，再运行完整交互 Zsh 或 `starship explain` |
 | Ghostty | `~/.config/ghostty/config.ghostty` | 先部署 `ghostty`，再首次启动应用 |
 | Antidote | 插件清单由 `zsh` 管理；clone 与静态加载文件不受管 | 把 Antidote 本体放入 data，插件 clone 与生成文件放入 cache |
 | zoxide、fzf | 本方案没有独立受管配置 | 数据库、Shell 生成代码与缓存留在仓库外 |
@@ -81,7 +81,11 @@ $DOTFILES_DIR/
 │       ├── .zshrc
 │       └── .zsh_plugins.txt
 ├── starship/
-│   └── .config/starship.toml
+│   └── .config/
+│       ├── starship.toml
+│       └── starship/profiles/
+│           ├── tokyo-night.toml
+│           └── catppuccin-mocha.toml
 ├── atuin/
 │   └── .config/atuin/config.toml
 └── ghostty/
@@ -95,10 +99,14 @@ $DOTFILES_DIR/
 | `zsh/.zshenv` | `$HOME/.zshenv` |
 | `zsh/.config/zsh/.zshrc` | `$HOME/.config/zsh/.zshrc` |
 | `starship/.config/starship.toml` | `$HOME/.config/starship.toml` |
+| `starship/.config/starship/profiles/tokyo-night.toml` | `$HOME/.config/starship/profiles/tokyo-night.toml` |
+| `starship/.config/starship/profiles/catppuccin-mocha.toml` | `$HOME/.config/starship/profiles/catppuccin-mocha.toml` |
 | `atuin/.config/atuin/config.toml` | `$HOME/.config/atuin/config.toml` |
 | `ghostty/.config/ghostty/config.ghostty` | `$HOME/.config/ghostty/config.ghostty` |
 
 `README.md` 和 `scripts/` 是仓库说明与运维入口，不是软件包，不能传给 Stow。
+
+Starship 的三份配置仍由一个 `starship` package 部署。默认文件由 Starship 在没有 `STARSHIP_CONFIG` 时读取；备用 profile 只有被该环境变量显式选中才生效。切换活动配置不需要增加 Stow package，也不应替换任何链接，完整边界见 [[Starship 提示符配置#7. 部署三套配置并选择活动配置]]。
 
 本文始终使用 `--no-folding`。如果让 Stow 把整个 `$HOME/.config/zsh` 折叠为指向仓库目录的单个链接，随后创建的 `local.zsh` 和生成文件就会实际落入仓库树，源、目标和本机状态的边界会变得模糊。
 
@@ -134,7 +142,7 @@ git -C "$DOTFILES_DIR" remote -v 2>/dev/null || true
 | 内容 | 默认决定 | 原因 |
 | --- | --- | --- |
 | Zsh 启动文件与插件清单 | 跟踪 | 稳定声明 |
-| Starship、Ghostty、Atuin 的非秘密配置 | 只要主线声明由 Stow 管理就跟踪 | 可复现行为，并避免应用抢先生成普通目标 |
+| Starship 默认配置与备用 profiles、Ghostty、Atuin 的非秘密配置 | 只要主线声明由 Stow 管理就跟踪 | 可复现行为，并避免应用抢先生成普通目标 |
 | `local.zsh`、`local.zprofile` | 不跟踪 | 本机与账号差异 |
 | Shell 历史、Atuin 数据库与密钥 | 不跟踪 | 私人状态或秘密 |
 | zoxide 数据库 | 不跟踪 | 持续变化的本机状态 |
@@ -291,6 +299,21 @@ for managed_path in \
   readlink "$managed_path"
 done
 
+starship_profiles_source="$DOTFILES_DIR/starship/.config/starship/profiles"
+if [ -d "$starship_profiles_source" ]; then
+  for profile_source in "$starship_profiles_source"/*.toml; do
+    [ -f "$profile_source" ] || continue
+    managed_path="$HOME/.config/starship/profiles/${profile_source##*/}"
+    if [ ! -L "$managed_path" ]; then
+      printf 'not a managed link: %s\n' "$managed_path" >&2
+      continue
+    fi
+    ls -ld "$managed_path"
+    readlink "$managed_path"
+  done
+fi
+unset managed_path profile_source starship_profiles_source
+
 zsh -n "$HOME/.zshenv"
 zsh -n "$HOME/.config/zsh/.zprofile"
 zsh -n "$HOME/.config/zsh/.zshrc"
@@ -345,6 +368,8 @@ git -C "$DOTFILES_DIR" grep --cached -nEi \
 6. 保留上一个已知良好提交，直到观察完成。
 
 创建新软件包时，目录应与第一份有效配置同时出现。不要预建空软件包，也不要为“以后可能用”把未安装组件加入部署脚本。
+
+Starship profile 是同一软件包中的多份稳定配置，不是多个软件包。临时选择只设置 `STARSHIP_CONFIG`；单机持久选择可以写入不受 Git 管理的 `local.zsh`。这类选择动作不应改写受管目标或让 dotfiles 工作树变脏。
 
 ## 11. 新机器恢复只保留一个事实来源
 

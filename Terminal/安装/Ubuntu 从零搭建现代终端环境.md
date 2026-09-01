@@ -12,7 +12,7 @@ tags:
   - Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-08-31T17:03:11
+updated: 2026-09-01T14:31:31
 ---
 
 本文从一台以 Bash 为起点的 Ubuntu 出发，完成 Zsh + Antidote + Starship + Atuin + zoxide + fzf 的安装，同时筛选旧 Bash 配置、从零建立 dotfiles、部署并形成已知良好提交。单看本文即可完成本地或 SSH 主流程。
@@ -105,7 +105,8 @@ for source_path in \
   "$HOME/.zshrc" \
   "$HOME/.config/zsh" \
   "$HOME/.config/atuin" \
-  "$HOME/.config/starship.toml"; do
+  "$HOME/.config/starship.toml" \
+  "$HOME/.config/starship"; do
   if [ -e "$source_path" ] || [ -L "$source_path" ]; then
     cp -a "$source_path" "$backup_dir/"
   fi
@@ -152,7 +153,8 @@ for original_path in \
   "$HOME/.zshrc" \
   "$HOME/.config/zsh" \
   "$HOME/.config/atuin" \
-  "$HOME/.config/starship.toml"; do
+  "$HOME/.config/starship.toml" \
+  "$HOME/.config/starship"; do
   if [ -e "$original_path" ] || [ -L "$original_path" ]; then
     if [ ! -e "$backup_dir/${original_path##*/}" ] \
       && [ ! -L "$backup_dir/${original_path##*/}" ]; then
@@ -323,7 +325,8 @@ plugin clones, logs, and secrets stay outside Git.
 将以下内容保存为 `$DOTFILES_DIR/zsh/.zshenv`：
 
 ```zsh
-export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
+# 不导出 ZDOTDIR；子 Zsh 必须重新读取根 .zshenv，才能获得同一组早期启动开关。
+ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
 
 # Ubuntu 的系统级 zshrc 可能先调用 compinit；本配置在用户 .zshrc 中统一初始化并把转储写入 XDG cache。
 # 该开关不需要导出；未使用它的平台会忽略这个普通 Shell 参数。
@@ -339,7 +342,7 @@ typeset -U path PATH
 export PATH
 ```
 
-Ubuntu 的系统级 `/etc/zsh/zshrc` 可能在用户 `.zshrc` 之前执行裸 `compinit`，从而先把默认 `.zcompdump` 写入 `$ZDOTDIR`。先用只读命令核对当前软件包实际提供的开关与调用；本基线仍由用户 `.zshrc` 执行带 `-d` 的唯一一次 `compinit`：
+这里故意不导出 `ZDOTDIR`。若父 Zsh 把它传给子进程，子 Zsh 会直接寻找 `$ZDOTDIR/.zshenv`；本布局没有该文件，于是根 `$HOME/.zshenv` 及其中非导出的 `skip_global_compinit` 都会被绕过。Ubuntu 的系统级 `/etc/zsh/zshrc` 随后可能在用户 `.zshrc` 之前执行裸 `compinit`，先把默认 `.zcompdump` 写入 `$ZDOTDIR`。先用只读命令核对当前软件包实际提供的开关与调用；本基线仍由用户 `.zshrc` 执行带 `-d` 的唯一一次 `compinit`：
 
 ```sh
 grep -nE 'skip_global_compinit|compinit' /etc/zsh/zshrc
@@ -352,7 +355,7 @@ grep -nE 'skip_global_compinit|compinit' /etc/zsh/zshrc
 将以下内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zprofile`：
 
 ```zsh
-# macOS 会命中 Homebrew；Ubuntu 因路径不存在而自然跳过。
+# 登录 Zsh 在 macOS 和 Ubuntu 都会读取本文件；Ubuntu 主线未安装 Homebrew，因此两个条件均不成立。
 if [[ -x /opt/homebrew/bin/brew ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
 elif [[ -x /usr/local/bin/brew ]]; then
@@ -589,7 +592,7 @@ success_symbol = "[>](bold green)"
 error_symbol = "[>](bold red)"
 ```
 
-这是一份可运行的启动基线，而不是模块白名单或最终个性化主题。到这里仍不要启动真实 Zsh；旧 Bash 中的 PATH、SDK、别名、函数和本机设置还必须经过下一节的逐项判断。完成第 10 节的已知良好提交后，如需显式限制后端模块或采用 Tokyo Night，分别选择 [[Starship 提示符配置#4. 可选：用显式 format 限定后端开发模块|显式后端开发配置]] 或 [[Starship 提示符配置#5. 从启动基线切换到 Tokyo Night 预设|Tokyo Night 派生配置]] 整体替换仓库源，不要把多份顶层 `format` 或同名 TOML 表直接拼接。完整启动顺序和扩展规则见 [[Zsh 与 Antidote 跨机器配置管理]]。
+这是一份可运行的启动基线，而不是模块白名单或最终个性化主题。到这里仍不要启动真实 Zsh；旧 Bash 中的 PATH、SDK、别名、函数和本机设置还必须经过下一节的逐项判断。完成第 10 节的已知良好提交后，再按 [[Starship 提示符配置#7. 部署三套配置并选择活动配置|Starship 三配置部署流程]] 把 [[Starship 提示符配置#4. 默认配置：用显式 format 限定后端开发模块|第 4 节完整配置]] 写入默认路径，并把第 5、6 节作为两个备用 profile 同时保留；不要在首次验收前替换启动基线，也不要拼接多份顶层 `format` 或同名 TOML 表。完整启动顺序和扩展规则见 [[Zsh 与 Antidote 跨机器配置管理]]。
 
 ## 6. 逐项审阅并迁移旧 Bash 行为
 
@@ -818,6 +821,10 @@ zsh -lic '
   expected_zdotdir="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
   printf "ZDOTDIR=%s\n" "$ZDOTDIR"
   [[ "$ZDOTDIR" == "$expected_zdotdir" ]] || exit 1
+  [[ "$(typeset -p ZDOTDIR)" != export\ * ]] || {
+    print -u2 "STOP: ZDOTDIR must not be exported"
+    exit 1
+  }
   command -v starship atuin zoxide fzf
   (( $+functions[antidote] )) || exit 1
   bindkey "^R"
@@ -960,6 +967,8 @@ git -C "$DOTFILES_DIR" remote -v
 git -C "$DOTFILES_DIR" push -u origin "$(git -C "$DOTFILES_DIR" branch --show-current)"
 ```
 
+上面的提交是首次启动、链接所有权与 Bash 迁移都已验证的恢复点。只有它存在后，才按 [[Starship 提示符配置#7. 部署三套配置并选择活动配置|Starship 三配置部署流程]] 建立最终提示符布局：默认路径改为第 4 节完整配置，第 5、6 节分别写入命名 profile，并以同一个 `starship` package 重新模拟、部署和验证。把这次个性化作为后续独立变更审查；切换 profile 本身不应产生新的 Git diff。
+
 ## 11. 已知良好提交之后再迁移历史
 
 原始历史更可能包含临时令牌、主机名和运维参数。不要直接导入备份：先复制到备份目录之外的临时工作副本，人工删除敏感行并确认权限，再输入脱敏副本路径。
@@ -998,7 +1007,8 @@ unset sanitized_bash_history sanitized_zsh_history
 2. 每项旧 Bash 候选行为都有迁移、由新基线替代、继续保留或明确放弃的结论，没有悬空清单；
 3. Zsh、Atuin 与 Starship 的受管目标在首次真实启动前已经由 Stow 部署，启动后仍指向 `$HOME/.dotfiles`；local 文件是真实私有文件，补全与插件生成文件只位于 XDG cache；
 4. 新登录与适用的 SSH 非交互场景都通过，账号登录 Shell、`$SHELL` 和当前进程的差异已理解；
-5. dotfiles 至少有一个已知可用提交，历史与同步操作发生在该基线之后。
+5. dotfiles 至少有一个已知可用提交，历史与同步操作发生在该基线之后；
+6. 最终三配置布局中的默认文件和两个备用 profile 都由 Stow 管理且能独立解析；未设置 `STARSHIP_CONFIG` 时使用第 4 节，切换动作不改写链接或仓库源，这次扩展已作为启动基线之后的独立变更审阅。
 
 需要更新、排障或回退时打开 [[现代终端环境更新、验证与回退]]；需要深入理解启动文件、平台拆分或插件顺序时打开 [[Zsh 与 Antidote 跨机器配置管理]]。
 

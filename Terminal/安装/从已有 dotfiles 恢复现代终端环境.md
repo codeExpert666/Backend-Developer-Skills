@@ -10,7 +10,7 @@ tags:
   - GNU-Stow
   - Zsh
 created: 2026-08-30T22:24:37
-updated: 2026-08-31T17:03:11
+updated: 2026-09-01T11:50:15
 ---
 
 这条主线适用于：dotfiles 已经推送到可信远端，现在要在一台新 macOS 或 Ubuntu 上恢复同一套终端环境。单独阅读本文即可完成依赖安装、克隆、冲突处理、部署、验证和回退。
@@ -94,6 +94,7 @@ for source_path in \
   "$HOME/.zshrc" \
   "$HOME/.config/zsh" \
   "$HOME/.config/starship.toml" \
+  "$HOME/.config/starship" \
   "$HOME/.config/atuin" \
   "$HOME/.config/ghostty"; do
   if [ -e "$source_path" ] || [ -L "$source_path" ]; then
@@ -274,7 +275,7 @@ git -C "$DOTFILES_DIR" ls-files
 确认源文件存在、没有提交历史或密钥，并从 README 与 `.zshrc` 共同推导本机的“启动依赖闭包”和生成文件位置：
 
 ```sh
-grep -nE 'compinit|zcompdump|antidote[[:space:]]+load|plugin_static|atuin init|starship init|zoxide init|fzf --zsh' \
+grep -nE 'compinit|zcompdump|antidote[[:space:]]+load|plugin_static|atuin init|starship init|STARSHIP_CONFIG|zoxide init|fzf --zsh' \
   "$DOTFILES_DIR/zsh/.config/zsh/.zshrc" 2>/dev/null || true
 
 for package_name in zsh atuin starship ghostty; do
@@ -283,6 +284,29 @@ for package_name in zsh atuin starship ghostty; do
 done
 unset package_name
 ```
+
+若仓库采用 [[Starship 提示符配置#7. 部署三套配置并选择活动配置|三配置布局]]，默认配置和两个备用 profile 都应已经被 Git 跟踪；恢复主线只检查仓库事实，不在新机器临时补写缺失文件：
+
+```sh
+starship_default_source="$DOTFILES_DIR/starship/.config/starship.toml"
+starship_profiles_source="$DOTFILES_DIR/starship/.config/starship/profiles"
+
+if [ -d "$starship_profiles_source" ]; then
+  test -s "$starship_default_source" || {
+    printf 'STOP: missing default Starship source\n' >&2
+    false
+  }
+  for required_profile in tokyo-night.toml catppuccin-mocha.toml; do
+    test -s "$starship_profiles_source/$required_profile" || {
+      printf 'STOP: missing Starship profile: %s\n' "$required_profile" >&2
+      false
+    }
+  done
+fi
+unset required_profile starship_default_source starship_profiles_source
+```
+
+仓库没有 `profiles/` 目录时，不据此判定恢复失败；它可能仍采用单配置布局。反过来，只要仓库 README 声明三配置布局，就不能把缺少备用 profile 当成“稍后再生成”的正常状态。
 
 Ubuntu 的系统级 `/etc/zsh/zshrc` 可能在用户 `.zshrc` 之前调用 `compinit`。若实际系统文件提供 `skip_global_compinit`，并且恢复出的用户 `.zshrc` 也负责初始化补全，就必须确认 dotfiles 的早期 `.zshenv` 已设置该开关；否则第一次真实启动就可能在 `$ZDOTDIR` 生成默认 `.zcompdump` 并重复初始化：
 
@@ -305,7 +329,7 @@ fi
 
 本套仓库的命令行闭包是 `zsh atuin starship`；macOS 桌面闭包是 `zsh atuin starship ghostty`。若克隆到的是其他布局，以已审查的 README 和启动文件为准；缺少被启动链依赖的受管配置包时先停止修复仓库，不要运行组件让它临时生成普通配置。
 
-如果恢复出的 `starship.toml` 使用 Nerd Font 或 Powerline 字形，字体属于新机器图形终端的外部依赖，不会随 Stow 链接自动恢复。应按仓库 README 安装其声明的字体并在 Ghostty 等终端中选中；通过 SSH 使用时，字形由显示会话的客户端终端负责，服务器端不需要安装 GUI 字体。字体与提示符配置的职责边界见 [[Starship 提示符配置#7. 字体与 Ghostty 的关系|Starship 的字体与 Ghostty 边界]]。
+如果恢复后实际选中的 Starship 配置使用 Nerd Font 或 Powerline 字形，字体属于新机器图形终端的外部依赖，不会随 Stow 链接自动恢复。三配置布局中的第 4 节默认配置不依赖 Nerd Font，两个备用 profile 即使已经恢复也只有在选中后才产生字体要求。应按仓库 README 安装活动配置声明的字体并在 Ghostty 等终端中选中；通过 SSH 使用时，字形由显示会话的客户端终端负责，服务器端不需要安装 GUI 字体。字体与提示符配置的职责边界见 [[Starship 提示符配置#8. 字体与 Ghostty 的关系|Starship 的字体与 Ghostty 边界]]。
 
 ## 6. 先暴露冲突，再部署相同列表
 
@@ -317,6 +341,7 @@ for target_path in \
   "$HOME/.config/zsh/.zprofile" \
   "$HOME/.config/zsh/.zshrc" \
   "$HOME/.config/starship.toml" \
+  "$HOME/.config/starship" \
   "$HOME/.config/atuin/config.toml" \
   "$HOME/.config/ghostty/config.ghostty"; do
   if [ -e "$target_path" ] || [ -L "$target_path" ]; then
@@ -404,26 +429,41 @@ fi
 
 ```sh
 managed_links_ok=1
+check_managed_link() {
+  managed_path=$1
+  if [ ! -L "$managed_path" ]; then
+    printf 'STOP: expected managed link: %s\n' "$managed_path" >&2
+    managed_links_ok=0
+    return
+  fi
+  ls -ld "$managed_path"
+  readlink "$managed_path"
+}
+
 for managed_path in \
   "$HOME/.zshenv" \
   "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/.zprofile" \
   "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/.zshrc" \
   "${XDG_CONFIG_HOME:-$HOME/.config}/atuin/config.toml" \
-  "${XDG_CONFIG_HOME:-$HOME/.config}/starship.toml"; do
-  if [ ! -L "$managed_path" ]; then
-    printf 'STOP: expected managed link: %s\n' "$managed_path" >&2
-    managed_links_ok=0
-    continue
-  fi
-  ls -ld "$managed_path"
-  readlink "$managed_path"
+  "$HOME/.config/starship.toml"; do
+  check_managed_link "$managed_path"
 done
+
+starship_profiles_source="$DOTFILES_DIR/starship/.config/starship/profiles"
+if [ -d "$starship_profiles_source" ]; then
+  for profile_source in "$starship_profiles_source"/*.toml; do
+    [ -f "$profile_source" ] || continue
+    check_managed_link \
+      "$HOME/.config/starship/profiles/${profile_source##*/}"
+  done
+fi
 
 if [ "$managed_links_ok" -ne 1 ]; then
   printf 'STOP: configuration closure is incomplete\n' >&2
   false
 fi
-unset managed_links_ok managed_path
+unset -f check_managed_link
+unset managed_links_ok managed_path profile_source starship_profiles_source
 
 zsh -n "$HOME/.zshenv"
 zsh -n "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/.zprofile"
@@ -432,6 +472,9 @@ zsh -n "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/.zshrc"
 zsh -lic '
   printf "shell=%s\nZDOTDIR=%s\n" "$ZSH_VERSION" "${ZDOTDIR-}"
   command -v starship atuin zoxide fzf
+  printf "effective Starship config=%s\n" \
+    "${STARSHIP_CONFIG:-$HOME/.config/starship.toml}"
+  starship explain
 '
 
 zsh_config_dir=$(zsh -c 'print -r -- "${ZDOTDIR:-$HOME}"')
@@ -447,17 +490,30 @@ fi
 unset unexpected_generated zsh_config_dir
 ```
 
-真实启动成功后，再读取 Atuin 实际解析出的关键值，并让 Starship 解释当前目录会启用哪些模块：
+真实启动成功后，再读取 Atuin 实际解析出的关键值。活动 Starship 配置已经在上面的真实 `zsh -lic` 中解释，因为只有该子进程真正读取了共享、平台和 `local.zsh`；不要在未加载这些文件的父 Shell 中猜测活动路径：
 
 ```sh
 atuin config get auto_sync --verbose
 atuin config get search_mode --verbose
 atuin config get filter_mode --verbose
 atuin config get workspaces --verbose
-starship explain
 ```
 
-恢复主线不预设这些键必须取某个固定值：应把 `atuin config get` 的文件值与解析值、`starship explain` 的模块来源，与 dotfiles 仓库中的受管源和 README 声明逐项比较。若结果不同，先排查配置加载路径、环境变量或本机覆盖，不要为了追平本笔记而覆盖仓库已经选择的同步策略、搜索范围或提示符主题。
+若仓库保存多份 Starship 配置，还要让每份受管文件至少完成一次独立解析；这不会改变当前 Shell 的选择：
+
+```sh
+for starship_config in \
+  "$HOME/.config/starship.toml" \
+  "$HOME/.config/starship/profiles/tokyo-night.toml" \
+  "$HOME/.config/starship/profiles/catppuccin-mocha.toml"; do
+  if [ -e "$starship_config" ] || [ -L "$starship_config" ]; then
+    STARSHIP_CONFIG="$starship_config" starship explain >/dev/null
+  fi
+done
+unset starship_config
+```
+
+恢复主线不预设 Atuin 键必须取某个固定值，也不强制 Starship 使用某个 profile：应把 `atuin config get` 的文件值与解析值、真实 Zsh 打印的活动路径和模块来源，与 dotfiles 仓库中的受管源和 README 声明逐项比较。若结果不同，先排查配置加载路径、`STARSHIP_CONFIG` 或本机覆盖，不要为了追平本笔记而覆盖仓库已经选择的同步策略、搜索范围或提示符主题。
 
 语法检查不执行启动逻辑；只有上述受管目标都确认是链接后，`zsh -lic` 才第一次经过登录与交互启动链。随后的 `find` 不假设缓存文件的具体名称或版本，只阻止默认补全转储和 Antidote 静态脚本以普通文件形式落入配置目录；实际 cache 路径仍以仓库 `.zshrc` 与 README 的声明为准。macOS 桌面还应在首次打开 Ghostty 前确认 `~/.config/ghostty/config.ghostty` 是链接。最后打开一个全新的 Ghostty 窗口或重新建立 SSH 连接，人工检查：
 

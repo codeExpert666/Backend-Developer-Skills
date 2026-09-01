@@ -12,7 +12,7 @@ tags:
   - Oh-My-Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-08-31T17:03:11
+updated: 2026-09-01T14:31:31
 ---
 
 本文把正在使用的 Oh My Zsh 迁移为 Zsh + Antidote + Starship + Atuin + zoxide + fzf，同时建立或接入普通 Git dotfiles，并由 GNU Stow 部署。单看本文即可完成盘点、并行重建、切换、提交和回退。
@@ -80,7 +80,8 @@ for source_path in \
   "$HOME/.zshrc" \
   "$HOME/.config/zsh" \
   "$HOME/.config/atuin" \
-  "$HOME/.config/starship.toml"; do
+  "$HOME/.config/starship.toml" \
+  "$HOME/.config/starship"; do
   if [[ -e "$source_path" || -L "$source_path" ]]; then
     cp -a "$source_path" "$backup_dir/"
   fi
@@ -317,6 +318,7 @@ plugin clones, logs, and secrets stay outside Git.
 将以下内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zprofile`：
 
 ```zsh
+# 登录 Zsh 在 macOS 和 Ubuntu 都会读取本文件；Ubuntu 主线未安装 Homebrew，因此两个条件均不成立。
 if [[ -x /opt/homebrew/bin/brew ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
 elif [[ -x /usr/local/bin/brew ]]; then
@@ -574,7 +576,7 @@ success_symbol = "[>](bold green)"
 error_symbol = "[>](bold red)"
 ```
 
-这里的 Starship 内容是“最小启动覆盖配置”：“最小”指覆盖项少；由于没有设置顶层 `format`，其他模块仍遵循 Starship 默认的 `$all` 格式和各自检测条件。已有可信 Starship 源时继续保留并审查，不用这段基线覆盖。迁移完成并形成第 10 节的已知良好提交后，如需显式限制后端模块或采用 Tokyo Night，分别选择 [[Starship 提示符配置#4. 可选：用显式 format 限定后端开发模块|显式后端开发配置]] 或 [[Starship 提示符配置#5. 从启动基线切换到 Tokyo Night 预设|Tokyo Night 派生配置]] 整体替换仓库源，不要直接拼接多份完整配置。
+这里的 Starship 内容是“最小启动覆盖配置”：“最小”指覆盖项少；由于没有设置顶层 `format`，其他模块仍遵循 Starship 默认的 `$all` 格式和各自检测条件。已有可信 Starship 源时继续保留并审查，不用这段基线覆盖。迁移完成并形成第 10 节的已知良好提交后，只有明确选择本文推荐布局时，才按 [[Starship 提示符配置#7. 部署三套配置并选择活动配置|Starship 三配置部署流程]] 把 [[Starship 提示符配置#4. 默认配置：用显式 format 限定后端开发模块|第 4 节完整配置]] 写入默认路径，并把第 5、6 节作为两个备用 profile 同时保留；不要在并行测试前替换启动基线，也不要拼接多份完整配置。
 
 这一步只准备配置源，不运行 `atuin info`、`atuin doctor`、`starship explain` 或真实 Zsh。目标普通文件的移动与 Stow 接管统一放在下一节处理。
 
@@ -664,7 +666,8 @@ Ubuntu 的系统级 `/etc/zsh/zshrc` 早于候选用户 `.zshrc` 执行；若并
 将以下内容保存为 `$DOTFILES_DIR/zsh/.zshenv`：
 
 ```zsh
-export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
+# 不导出 ZDOTDIR；子 Zsh 必须重新读取根 .zshenv，才能获得同一组早期启动开关。
+ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
 
 # Ubuntu 的系统级 zshrc 可能先调用 compinit；本配置在用户 .zshrc 中统一初始化并把转储写入 XDG cache。
 # 该开关不需要导出；未使用它的平台会忽略这个普通 Shell 参数。
@@ -679,7 +682,7 @@ typeset -U path PATH
 export PATH
 ```
 
-把第 3 节确认“SSH 非交互命令也必须看到”的额外共享 PATH 现在加入；主题、插件、别名和 SDK 交互初始化不放进 `.zshenv`。`skip_global_compinit` 是必须早于系统级交互启动文件生效的无副作用开关，因此不能延后到 `linux.zsh` 或用户 `.zshrc`。
+把第 3 节确认“SSH 非交互命令也必须看到”的额外共享 PATH 现在加入；主题、插件、别名和 SDK 交互初始化不放进 `.zshenv`。`ZDOTDIR` 只在当前 Zsh 中设置，确保子 Zsh 仍从根 `$HOME/.zshenv` 开始并重新取得 `skip_global_compinit`；后者是必须早于系统级交互启动文件生效的无副作用开关，因此不能延后到 `linux.zsh` 或用户 `.zshrc`。
 
 先检查语法。若旧根 `.zshenv` 是普通文件，把它移动到**第 2 节实际输出且已验证**的备份目录：
 
@@ -747,6 +750,11 @@ starship --version
 atuin doctor
 fzf --version
 zsh -lic '
+  [[ "$(typeset -p ZDOTDIR)" != export\ * ]] || {
+    print -u2 "STOP: ZDOTDIR must not be exported"
+    exit 1
+  }
+
   cache_root="${XDG_CACHE_HOME:-$HOME/.cache}"
   for cache_path in \
     "$cache_root/zsh/zcompdump-$ZSH_VERSION" \
@@ -829,6 +837,8 @@ git -C "$DOTFILES_DIR" log -1 --format=fuller
 
 若这是已有 dotfiles，只提交本次明确变更，不要把既有未提交内容据为本次成果。
 
+这个提交是“迁移后能够稳定进入新 Zsh”的恢复点，不是强制统一主题的理由。没有可信旧 Starship 源且明确采用推荐布局时，才继续执行 [[Starship 提示符配置#7. 部署三套配置并选择活动配置|Starship 三配置部署流程]]；已有可信源则先比较其模块、字体和环境变量边界，再决定是否迁移。采用三配置布局后，默认路径保存第 4 节，第 5、6 节进入命名 profile；切换只通过 `STARSHIP_CONFIG`，不改写链接或仓库源。
+
 ## 11. 提交之后再导入历史与目录数据
 
 先人工检查并脱敏第 2 节历史副本，再输入脱敏文件路径：
@@ -879,7 +889,7 @@ fi
 [[ -f "$backup_dir/.zshrc" ]] && cp -p "$backup_dir/.zshrc" "$HOME/.zshrc"
 
 mkdir -p "$HOME/.config"
-for restore_name in atuin starship.toml; do
+for restore_name in atuin starship.toml starship; do
   restore_source="$backup_dir/$restore_name"
   restore_target="$HOME/.config/$restore_name"
   if [[ -e "$restore_source" || -L "$restore_source" ]]; then
@@ -910,7 +920,7 @@ exec env -u ZDOTDIR zsh -l
 ## 进一步理解
 
 - [[Zsh 与 Antidote 跨机器配置管理]]：启动顺序、平台拆分与插件语义。
-- [[Starship 提示符配置]]：启动覆盖、显式模块清单、Tokyo Night 与性能验证。
+- [[Starship 提示符配置]]：启动覆盖、默认配置、备用 profile、字体与性能验证。
 - [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]：软件包、冲突、秘密与日常生命周期。
 - [[现代终端环境更新、验证与回退]]：迁移后的更新和故障定位。
 

@@ -12,7 +12,7 @@ tags:
   - Antidote
   - Ghostty
 created: 2026-07-19T16:30:50
-updated: 2026-08-31T17:03:11
+updated: 2026-09-01T14:31:31
 ---
 
 本文从一台尚未建立现代终端配置的 macOS 出发，完成 Ghostty + Zsh + Antidote + Starship + Atuin + zoxide + fzf 的安装，同时筛选可能存在的旧 Zsh 行为，从零建立、部署并提交一份 dotfiles 仓库。单看本文即可完成主流程。
@@ -100,7 +100,8 @@ for source_path in \
   "$HOME/.config/zsh" \
   "$HOME/.config/ghostty" \
   "$HOME/.config/atuin" \
-  "$HOME/.config/starship.toml"; do
+  "$HOME/.config/starship.toml" \
+  "$HOME/.config/starship"; do
   if [ -e "$source_path" ] || [ -L "$source_path" ]; then
     cp -a "$source_path" "$backup_dir/"
   fi
@@ -259,7 +260,8 @@ mkdir -p \
 将以下内容保存为 `$DOTFILES_DIR/zsh/.zshenv`：
 
 ```zsh
-export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
+# 不导出 ZDOTDIR；子 Zsh 必须重新读取根 .zshenv，才能获得同一组早期启动开关。
+ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
 
 # Ubuntu 的系统级 zshrc 可能先调用 compinit；共享 dotfiles 由用户 .zshrc 统一初始化并把转储写入 XDG cache。
 # 该开关不需要导出；没有读取者的平台不受影响，未来把同一仓库部署到 Ubuntu 时才会生效。
@@ -275,14 +277,14 @@ typeset -U path PATH
 export PATH
 ```
 
-`.zshenv` 会影响脚本和 SSH 非交互命令，因此不加载插件、不输出文字、不访问网络。这里保留 `skip_global_compinit` 是因为该文件属于跨平台共享配置源：macOS 主线本身不依赖这个开关，而 Ubuntu 必须让它早于系统级 `/etc/zsh/zshrc` 生效，不能延后到 `linux.zsh` 或用户 `.zshrc`。XDG 与 `ZDOTDIR` 的路径模型见 [[XDG 基础目录与终端配置边界]]。
+`.zshenv` 会影响脚本和 SSH 非交互命令，因此不加载插件、不输出文字、不访问网络。`ZDOTDIR` 只决定当前 Zsh 后续去哪里读取启动文件，不向子进程导出；否则子 Zsh 会绕过根 `$HOME/.zshenv`，无法重新取得其中非导出的早期开关。这里保留 `skip_global_compinit` 是因为该文件属于跨平台共享配置源：macOS 主线本身不依赖这个开关，而 Ubuntu 必须让它早于系统级 `/etc/zsh/zshrc` 生效，不能延后到 `linux.zsh` 或用户 `.zshrc`。XDG 与 `ZDOTDIR` 的路径模型见 [[XDG 基础目录与终端配置边界]]。
 
 ### 5.2 登录 Shell 读取的 `.zprofile`
 
 将以下内容保存为 `$DOTFILES_DIR/zsh/.config/zsh/.zprofile`：
 
 ```zsh
-# 只在登录 Shell 中加载 Homebrew 的完整环境。
+# 登录 Zsh 在 macOS 和 Ubuntu 都会读取本文件；Ubuntu 主线未安装 Homebrew，因此两个条件均不成立。
 if [[ -x /opt/homebrew/bin/brew ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
 elif [[ -x /usr/local/bin/brew ]]; then
@@ -530,7 +532,7 @@ success_symbol = "[>](bold green)"
 error_symbol = "[>](bold red)"
 ```
 
-完成第 11 节的已知良好提交后，如需显式限制后端模块或采用 Tokyo Night，分别选择 [[Starship 提示符配置#4. 可选：用显式 format 限定后端开发模块|显式后端开发配置]] 或 [[Starship 提示符配置#5. 从启动基线切换到 Tokyo Night 预设|Tokyo Night 派生配置]] 整体替换仓库源，不要把多份顶层 `format` 或同名 TOML 表直接拼接。
+完成第 11 节的已知良好提交后，再按 [[Starship 提示符配置#7. 部署三套配置并选择活动配置|Starship 三配置部署流程]] 把 [[Starship 提示符配置#4. 默认配置：用显式 format 限定后端开发模块|第 4 节完整配置]] 写入默认路径，并把第 5、6 节作为两个备用 profile 同时保留；不要在首次验收前替换启动基线，也不要拼接多份顶层 `format` 或同名 TOML 表。
 
 ### 5.8 写入 Ghostty 的受管配置
 
@@ -783,6 +785,10 @@ fi
 ```sh
 /bin/zsh -lic '
   printf "shell-version=%s\nZDOTDIR=%s\n" "$ZSH_VERSION" "$ZDOTDIR"
+  [[ "$(typeset -p ZDOTDIR)" != export\ * ]] || {
+    print -u2 "STOP: ZDOTDIR must not be exported"
+    exit 1
+  }
   command -v starship atuin zoxide fzf
   (( $+functions[antidote] )) || exit 1
 
@@ -903,6 +909,8 @@ git -C "$DOTFILES_DIR" remote -v
 git -C "$DOTFILES_DIR" push -u origin "$(git -C "$DOTFILES_DIR" branch --show-current)"
 ```
 
+上面的提交是首次启动、链接所有权与旧 Zsh 行为迁移都已验证的恢复点。只有它存在后，才按 [[Starship 提示符配置#7. 部署三套配置并选择活动配置|Starship 三配置部署流程]] 建立最终提示符布局：默认路径改为第 4 节完整配置，第 5、6 节分别写入命名 profile，并以同一个 `starship` package 重新模拟、部署和验证。把这次个性化作为后续独立变更审查；切换 profile 本身不应产生新的 Git diff。
+
 ## 12. 最后处理历史和个性化配置
 
 从第 2 节实际打印的备份目录中，先人工检查并脱敏历史副本，再导入 Atuin：
@@ -917,7 +925,7 @@ fi
 atuin stats
 ```
 
-不要把历史、Atuin 数据库或密钥提交到 Git。同步策略见 [[Atuin 命令历史管理]]；Ghostty 与 Starship 已有最小受管基线，后续个性化应先在对应专题中选择完整方案，再修改仓库源，zoxide 与 fzf 的个性化则按专题边界处理。
+不要把历史、Atuin 数据库或密钥提交到 Git。同步策略见 [[Atuin 命令历史管理]]；Ghostty 已有最小受管基线，Starship 的三配置最终布局只按上面的专题流程建立，zoxide 与 fzf 的个性化则按专题边界处理。
 
 ## 最终验收
 
@@ -929,7 +937,8 @@ atuin stats
 4. 第 9 节的登录交互启动与缓存边界检查正常结束并输出 `startup-ok`；
 5. `Ctrl-R`、自动建议、语法高亮、`zi`、`Ctrl-T` 和 Starship 按预期工作；
 6. local 文件、历史、密钥、插件 clone 与缓存均未出现在 `git status`，补全与插件生成文件只位于 XDG cache；
-7. dotfiles 至少有一个已知可用提交，若配置了远端则已核对推送分支。
+7. dotfiles 至少有一个已知可用提交，若配置了远端则已核对推送分支；
+8. 最终三配置布局中的默认文件和两个备用 profile 都由 Stow 管理且能独立解析；未设置 `STARSHIP_CONFIG` 时使用第 4 节，切换动作不改写链接或仓库源，这次扩展已作为启动基线之后的独立变更审阅。
 
 失败时保留当前窗口，按 [[现代终端环境更新、验证与回退]] 定位；需要解除部署时，先模拟并确认软件包，再执行 Stow `--delete`，随后从第 2 节备份恢复明确文件。
 

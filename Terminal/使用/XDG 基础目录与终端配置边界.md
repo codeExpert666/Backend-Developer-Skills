@@ -11,7 +11,7 @@ tags:
   - Zsh
   - Dotfiles
 created: 2026-08-30T22:24:37
-updated: 2026-08-31T17:03:11
+updated: 2026-09-01T14:08:50
 ---
 
 平台搭建主线默认使用 XDG 约定的默认目录。只有在你想理解路径边界、修改默认目录，或排查“程序到底读了哪里”时，才需要打开这篇笔记。
@@ -56,34 +56,41 @@ printf 'effective config root=%q\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
 | GNU Stow | 仓库中的源文件如何映射到目标目录 |
 | Git | 哪些源文件形成版本历史并可推送到远端 |
 
-例如 Starship 的源文件可以是：
+例如 Starship 的默认源与两个备用 profile 可以是：
 
 ```text
 $DOTFILES_DIR/starship/.config/starship.toml
+$DOTFILES_DIR/starship/.config/starship/profiles/tokyo-night.toml
+$DOTFILES_DIR/starship/.config/starship/profiles/catppuccin-mocha.toml
 ```
 
-部署后的目标路径是：
+部署后的目标路径分别是：
 
 ```text
 $HOME/.config/starship.toml
+$HOME/.config/starship/profiles/tokyo-night.toml
+$HOME/.config/starship/profiles/catppuccin-mocha.toml
 ```
 
-XDG 解释目标为什么在 `.config`，Stow 创建这层映射，Git 只跟踪仓库中的源文件。完整的源、目标、软件包和冲突模型见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
+XDG 解释这些目标为什么在 `.config`，Stow 创建这层映射，Git 只跟踪仓库中的源文件。未设置 `STARSHIP_CONFIG` 时，Starship 读取默认文件；设置后读取指定的备用 profile。环境变量只选择配置，不会把 profile 变成 state 或 cache，也不会改变 Stow 所有权。完整的源、目标、软件包和冲突模型见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
 
 路径职责还决定不了“谁先创建文件”。若 `~/.config/atuin/config.toml` 或 `~/.config/ghostty/config.ghostty` 准备由 Stow 管理，就必须先创建仓库源并部署链接，再运行会读取或生成配置的组件。否则应用可能先写出普通文件，Stow 随后只能报告冲突。data、state 与 cache 则应继续由应用创建，不需要为了 Stow 预建或链接。
 
 ## 4. Zsh 为什么还需要 ZDOTDIR
 
-Zsh 默认先寻找 `$HOME/.zshenv`。读取它后，如果设置了 `ZDOTDIR`，后续启动文件会转到该目录。最小入口通常是：
+Zsh 启动时若尚未设置 `ZDOTDIR`，会用 `$HOME` 寻找 `.zshenv`。读取这个根入口后，在当前进程设置 `ZDOTDIR`，后续启动文件才转到该目录。最小入口通常是：
 
 ```zsh
 # ~/.zshenv，由 Stow 链接到 dotfiles 中的源文件
-export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
+# 不导出；子 Zsh 需要重新从 $HOME/.zshenv 取得入口与早期启动开关。
+ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
 ```
+
+这里不能机械写成 `export ZDOTDIR=...`。若已配置的父 Zsh 把 `ZDOTDIR` 传给子进程，子 Zsh 会直接寻找 `$ZDOTDIR/.zshenv`；当前布局没有管理第二份 `.zshenv`，于是根入口以及其中非导出的 `skip_global_compinit` 都会被跳过。保持 `ZDOTDIR` 为当前 Zsh 的普通参数，既能重定向本次启动的后续文件，也能让每个子 Zsh 重新经过同一个根入口。
 
 于是读取过程变为：
 
-1. Zsh 从 `$HOME/.zshenv` 得到 `ZDOTDIR`；
+1. Zsh 在 `ZDOTDIR` 尚未设置时从 `$HOME/.zshenv` 得到当前进程的 `ZDOTDIR`；
 2. 登录 Shell 再从 `$ZDOTDIR/.zprofile` 读取登录环境；
 3. 交互式 Shell 从 `$ZDOTDIR/.zshrc` 读取插件、补全、提示符和交互行为。
 
@@ -99,6 +106,7 @@ $HOME/
 ├── .config/
 │   ├── zsh/                        # 可版本化的 Zsh 配置与本机私有文件并存
 │   ├── starship.toml               # 可版本化配置
+│   ├── starship/profiles/          # 可版本化的 Starship 备用配置
 │   ├── atuin/config.toml            # 可版本化的非秘密配置
 │   └── ghostty/config.ghostty       # 可版本化配置
 ├── .local/

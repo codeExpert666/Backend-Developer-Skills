@@ -12,7 +12,7 @@ tags:
   - Antidote
   - Dotfiles
 created: 2026-07-19T16:35:26
-updated: 2026-08-31T17:03:11
+updated: 2026-09-01T14:31:31
 ---
 
 这篇专题解释 Zsh 启动文件的读取边界、跨平台拆分方式、Antidote 清单语义，以及补全、按键、提示符和语法高亮为什么必须按特定顺序加载。
@@ -58,15 +58,16 @@ Zsh 还会读取相应的系统级启动文件。以交互式 Shell 为例，核
 Zsh 尚未知道 `ZDOTDIR` 时，会先从 `$HOME/.zshenv` 取得入口：
 
 ```zsh
-export ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
+# 不导出 ZDOTDIR；子 Zsh 必须重新读取根 .zshenv，才能获得同一组早期启动开关。
+ZDOTDIR="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
 
 # Ubuntu 的系统级 zshrc 可能先调用 compinit；用户 .zshrc 将统一初始化并把转储写入 XDG cache。
 skip_global_compinit=1
 ```
 
-后续用户文件才改到 `$ZDOTDIR`。用户 `.zshenv` 又早于系统级交互 `zshrc`，因此它也负责必须在系统级后续文件之前生效、且没有输出或网络副作用的最小开关。适合放入：
+后续用户文件才改到 `$ZDOTDIR`。这里的 `ZDOTDIR` 只需影响当前 Zsh，不能导出给子进程：一旦继承，子 Zsh 会改找 `$ZDOTDIR/.zshenv`；本布局没有第二份 `.zshenv`，根入口和其中非导出的早期开关便会被绕过。用户 `.zshenv` 又早于系统级交互 `zshrc`，因此它也负责必须在系统级后续文件之前生效、且没有输出或网络副作用的最小开关。适合放入：
 
-- `ZDOTDIR`；
+- 当前 Zsh 使用但不导出的 `ZDOTDIR`；
 - SSH 非交互命令、脚本和 IDE 后端都必须看到的少量 PATH；
 - 经实际系统文件确认、必须早于系统级 `zshrc` 生效的控制开关，例如本方案的 `skip_global_compinit`；
 - 不输出文字、不访问网络、不会显著变慢的环境声明。
@@ -99,6 +100,7 @@ XDG 默认值、显式变量与 `ZDOTDIR` 的关系见 [[XDG 基础目录与终�
 跨平台配置应先做能力判断：
 
 ```zsh
+# 登录 Zsh 在 macOS 和 Ubuntu 都会读取本文件；Ubuntu 主线未安装 Homebrew，因此两个条件均不成立。
 if [[ -x /opt/homebrew/bin/brew ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
 elif [[ -x /usr/local/bin/brew ]]; then
@@ -108,7 +110,7 @@ fi
 [[ -r "$ZDOTDIR/local.zprofile" ]] && source "$ZDOTDIR/local.zprofile"
 ```
 
-这段逻辑在 Ubuntu 上自然跳过 Homebrew。机器路径、账号和私有登录环境进入真实的 `local.zprofile`，不进入 Stow 软件包。不要为了复用一行环境变量而整体 `source ~/.profile`：POSIX Shell 与 Zsh 的读取场景和语法边界并不相同。
+Ubuntu 登录 Zsh 仍会读取 `.zprofile`；只是当前 Ubuntu 主线不安装 Homebrew，所以上述两个条件均不成立，初始化分支自然跳过。机器路径、账号和私有登录环境进入真实的 `local.zprofile`，不进入 Stow 软件包。不要为了复用一行环境变量而整体 `source ~/.profile`：POSIX Shell 与 Zsh 的读取场景和语法边界并不相同。
 
 ## 4. `.zshrc` 按依赖阶段加载
 
@@ -318,6 +320,11 @@ env -i HOME="$HOME" PATH=/usr/bin:/bin /bin/zsh -c \
   'printf "ZDOTDIR=%s PATH=%s\n" "$ZDOTDIR" "$PATH"'
 
 zsh -lic '
+  [[ "$(typeset -p ZDOTDIR)" != export\ * ]] || {
+    print -u2 "STOP: ZDOTDIR must not be exported"
+    exit 1
+  }
+
   command -v starship atuin zoxide fzf
   (( $+functions[antidote] )) || exit 1
   bindkey "^R"

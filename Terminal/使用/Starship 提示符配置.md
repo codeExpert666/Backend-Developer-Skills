@@ -11,7 +11,7 @@ tags:
   - Starship
   - Zsh
 created: 2026-07-19T16:35:26
-updated: 2026-09-01T10:54:44
+updated: 2026-09-01T11:50:15
 ---
 
 Starship 是独立的跨 Shell 提示符程序，只负责根据当前目录、Git 仓库和项目文件渲染 prompt。它不提供 Zsh 插件管理、命令历史、目录数据库、模糊查找或终端主题；这些职责分别属于 Antidote、Atuin、zoxide、fzf 和 Ghostty。完整分层见 [[现代终端环境搭建概览]]，配置源与默认路径的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
@@ -42,11 +42,11 @@ fi
 
 在本文推荐的组合中，Starship 位于 fzf、Atuin、zoxide 之后；`zsh-syntax-highlighting` 仍需在 `.zshrc` 真正最后加载。完整顺序见 [[Zsh 与 Antidote 跨机器配置管理]]。
 
-把初始化块写进仓库源不会立即执行它。若平台主线已经写入启动基线，可以继续保留；若要定制，则在第 4～6 节中选择一套完整配置。无论选择哪种内容，都先确认第 3 节的配置源并按第 7 节部署，之后才运行 `starship explain`、`exec zsh -l` 或任何完整交互式 Zsh；这样所有受管配置在行为验证前已经拥有明确链接。
+把初始化块写进仓库源不会立即执行它。平台主线先用最小启动覆盖配置完成首次部署、真实 Zsh 验收和已知良好提交；随后按第 7 节建立三配置布局：第 4 节写入默认路径，第 5、6 节作为备用 profile 同时保留。三份配置都先由 Stow 部署，再运行 `starship explain`、`exec zsh -l` 或任何完整交互式 Zsh；这样所有受管配置在行为验证前已经拥有明确链接。
 
 从 Oh My Zsh 迁移时，必须移除或禁用原有的 `ZSH_THEME`，也不要再初始化 Powerlevel10k、Pure 等第二套 prompt。多个提示符同时修改 `PROMPT`、`RPROMPT` 和 precmd hook，会产生覆盖、闪烁或重复内容。
 
-## 3. 使用默认配置路径
+## 3. 保留默认路径并建立备用配置目录
 
 Starship 默认读取：
 
@@ -54,24 +54,36 @@ Starship 默认读取：
 ~/.config/starship.toml
 ~~~
 
-主路线不直接创建目标文件，而是在 dotfiles 的 `starship` package 中建立配置源，同时确保目标父目录是真实目录：
+第 4 节继续占用这个默认路径；第 5、6 节放在同一 `starship` package 的 `profiles/` 目录。`profile` 在本文中表示一份可以独立解析和启用的完整配置，不是可以拼接到其他配置上的 TOML 片段；`profiles/` 只是本套 dotfiles 的归档目录，Starship 不会自动扫描其中的文件：
+
+~~~text
+$DOTFILES_DIR/starship/.config/
+├── starship.toml
+└── starship/
+    └── profiles/
+        ├── tokyo-night.toml
+        └── catppuccin-mocha.toml
+~~~
+
+主路线不直接创建 `$HOME` 下的目标文件，而是在 dotfiles 中准备配置源，同时确保目标父目录是真实目录：
 
 ~~~bash
 DOTFILES_DIR="$HOME/.dotfiles"
 starship_source="$DOTFILES_DIR/starship/.config/starship.toml"
+starship_profiles_dir="$DOTFILES_DIR/starship/.config/starship/profiles"
 
 git -C "$DOTFILES_DIR" status --short --branch
-mkdir -p "${starship_source%/*}" "$HOME/.config"
+mkdir -p "${starship_source%/*}" "$starship_profiles_dir" "$HOME/.config"
 touch "$starship_source"
 ~~~
 
-除非现有 dotfiles 布局无法调整，否则不要额外设置 `STARSHIP_CONFIG`。统一默认路径能减少 macOS、Ubuntu、本地终端和 SSH 会话之间的差异。
+截至 2026-09-01，Starship 官方支持用 [`STARSHIP_CONFIG`](https://starship.rs/config/#config-file-location) 环境变量选择非默认配置路径。本文只在明确选择备用 profile 时设置它；未设置时始终回到 `~/.config/starship.toml`，不为默认配置增加额外选择状态。`STARSHIP_CONFIG` 必须在 Starship 初始化之前生效，第 7 节给出临时和本机持久两种用法。
 
-## 4. 可选：用显式 format 限定后端开发模块
+## 4. 默认配置：用显式 format 限定后端开发模块
 
 平台主线先写入“最小启动覆盖配置”：它只覆盖少量选项，没有设置顶层 `format`，因此其他模块继续遵循 Starship 默认的 `$all` 格式并按目录条件出现。“最小”指覆盖项少，不表示只会显示配置文件中出现的模块；默认格式和当前模块顺序以 [Starship 官方配置](https://starship.rs/config/#default-prompt-format) 为准。
 
-如果启动基线已经通过验证，并且希望明确限制提示符中允许出现的模块，可以用下面这份完整配置**替换**仓库源。它只展示身份、目录、Git、Java、Go、Docker 上下文和耗时命令。Kubernetes 默认关闭，避免在普通目录持续显示集群信息；需要时再显式启用。符号使用普通文本，不依赖 Nerd Font：
+启动基线通过验证并形成已知良好提交后，用下面这份完整配置替换 `$DOTFILES_DIR/starship/.config/starship.toml`。它是三配置布局的默认配置：未设置 `STARSHIP_CONFIG` 时自动生效。它只展示身份、目录、Git、Java、Go、Docker 上下文和耗时命令。Kubernetes 默认关闭，避免在普通目录持续显示集群信息；需要时再显式启用。符号使用普通文本，不依赖 Nerd Font：
 
 ~~~toml
 # ~/.config/starship.toml
@@ -148,9 +160,9 @@ error_symbol = "[>](bold red)"
 2. Java、Go 和 Docker 模块只在项目上下文满足检测条件时出现，不把所有已安装工具堆进每一行。
 3. Kubernetes 需要把 `disabled = true` 改为 `false` 后才显示；启用前先确认 kubeconfig 和上下文切换习惯可靠。
 
-如果只想继续使用 Starship 默认模块，可以保留平台主线的短配置；如果希望采用 Tokyo Night 或 Catppuccin Powerline，则分别选择第 5、6 节。第 4～6 节都是完整方案，不能把多个顶层 `format` 或同名 TOML 表机械拼接。不要在首次启动尚未通过时复制长主题配置，再通过逐项删除寻找故障。
+第 4 节只在默认路径维护一份，不再复制为 `backend.toml`。第 5、6 节分别进入两个备用 profile；三份配置都含顶层 `format`，不能把多个顶层 `format` 或同名 TOML 表机械拼接。不要在首次启动尚未通过时替换最小启动配置，再通过逐项删除长配置寻找故障。
 
-## 5. 从启动基线切换到 Tokyo Night 预设
+## 5. 备用配置：Tokyo Night 派生预设
 
 Tokyo Night 是 [Starship 官方预设列表](https://starship.rs/presets/) 收录的社区预设，本文于 2026-08-31 核对了其页面和 TOML。上游版本使用 Nerd Font、固定深色配色、操作系统、目录、Git、Node.js、Bun、Rust、Go、PHP 与时间模块；下面的派生配置保留其视觉结构，同时按本文的后端开发边界补回 SSH 身份、Git 操作状态、Java、Docker、Kubernetes 和长命令耗时。它不是 Starship 默认配置，也不与第 4 节叠加。
 
@@ -160,7 +172,7 @@ Tokyo Night 是 [Starship 官方预设列表](https://starship.rs/presets/) 收�
 | Git | 分支、工作区状态 | 额外显示 merge、rebase 等操作状态 |
 | 开发模块 | Node.js、Bun、Rust、Go、PHP | Java、Go、Docker；Kubernetes 默认关闭 |
 | 末端信息 | 当前时间 | 长命令耗时和当前时间 |
-| 写入位置 | 官网命令直接指定运行时路径 | 先生成临时候选，再更新 dotfiles 仓库源 |
+| 写入位置 | 官网命令直接指定运行时路径 | 先生成临时候选，再更新 dotfiles 中的备用 profile |
 
 ### 5.1 先确认字体与明暗主题边界
 
@@ -174,15 +186,20 @@ Tokyo Night 是 [Starship 官方预设列表](https://starship.rs/presets/) 收�
 
 ~~~bash
 DOTFILES_DIR="$HOME/.dotfiles"
-starship_source="$DOTFILES_DIR/starship/.config/starship.toml"
+starship_profile_source="$DOTFILES_DIR/starship/.config/starship/profiles/tokyo-night.toml"
 preset_dir="$(mktemp -d)"
 preset_candidate="$preset_dir/starship.toml"
 
-test -f "$starship_source"
+mkdir -p "${starship_profile_source%/*}"
 starship --version
 starship preset tokyo-night -o "$preset_candidate"
 sed -n '1,220p' "$preset_candidate"
-diff -u "$starship_source" "$preset_candidate"
+
+if [ -f "$starship_profile_source" ]; then
+  diff -u "$starship_profile_source" "$preset_candidate"
+else
+  printf 'new profile target: %s\n' "$starship_profile_source"
+fi
 ~~~
 
 `diff` 退出码为 `0` 表示内容相同，`1` 表示发现预期差异，大于 `1` 才表示比较失败。在同一 Shell 会话中审阅完成后清理本轮候选文件；变量指向本轮刚创建的临时目录，不要替换成宽泛路径：
@@ -190,14 +207,14 @@ diff -u "$starship_source" "$preset_candidate"
 ~~~bash
 rm -f "$preset_candidate"
 rmdir "$preset_dir"
-unset preset_candidate preset_dir starship_source
+unset preset_candidate preset_dir starship_profile_source
 ~~~
 
 `starship preset` 使用当前已安装 Starship 随附的预设。升级 Starship 后若想跟进上游变化，应再次生成临时候选并比较，不要把官网变化静默覆盖到已验证配置。
 
 ### 5.3 使用经过适配的完整配置
 
-下面内容整体保存到 `$DOTFILES_DIR/starship/.config/starship.toml`。它与第 4、6 节是三选一关系：
+下面内容整体保存到 `$DOTFILES_DIR/starship/.config/starship/profiles/tokyo-night.toml`。保存文件不会自动启用它；第 7 节通过 `STARSHIP_CONFIG` 显式选择：
 
 ~~~toml
 # 为支持 JSON Schema 的编辑器提供补全与类型检查；这行不控制外观。
@@ -352,7 +369,7 @@ vimcmd_symbol = "[❮](bold #9ece6a)"
 
 与上游相比，本配置没有保留 Node.js、Bun、Rust 和 PHP；只有确实用于日常项目时，才把对应模块同时加入顶层 `format` 和语言色块配置。若不需要始终显示时间，不能只把 `[time]` 改为禁用：还要从顶层 `format` 移除 `$time`，并决定是否保留最后一段。最后一段只剩 `$cmd_duration` 时，普通短命令之后会出现没有内容的色块，必要时应把耗时模块移出 Powerline 色块再单独显示。
 
-## 6. 从启动基线切换到 Catppuccin Powerline 预设
+## 6. 备用配置：Catppuccin Mocha Powerline
 
 [Catppuccin Powerline](https://starship.rs/zh-CN/presets/catppuccin-powerline) 是 Starship 官方预设列表收录的社区预设。官方说明它是在 Gruvbox Rainbow 预设上做最小修改，并改用 Catppuccin 配色；本文于 2026-09-01 核对了其页面和 TOML。它是一份带顶层 `format` 的完整配置，使用 Powerline 分隔符和 Nerd Font 图标，不能叠加到第 4、5 节的完整配置上。
 
@@ -366,7 +383,7 @@ vimcmd_symbol = "[❮](bold #9ece6a)"
 | 开发模块 | C、Rust、Go、Node.js、Bun、PHP、Java、Kotlin、Haskell、Python 和 Conda | Java、Go、Docker；Kubernetes 保留样式但默认关闭 |
 | 命令耗时 | 显示毫秒，超过 45 秒时触发桌面通知 | 超过两秒才显示，不显示毫秒，不触发桌面通知 |
 | 行布局 | 禁用 `line_break`，输入符号保持在同一行 | 启用 `line_break`，输入符号单独位于第二行；通过 `add_newline` 在相邻提示符之间保留空行 |
-| 写入位置 | 官网命令直接指定运行时路径 | 先生成临时候选进行上游对照，再更新 dotfiles 仓库源 |
+| 写入位置 | 官网命令直接指定运行时路径 | 先生成临时候选进行上游对照，再更新 dotfiles 中的备用 profile |
 
 ### 6.1 先确认字体与 Mocha 明暗边界
 
@@ -380,16 +397,21 @@ Mocha 是 Catppuccin 最深的配色变体，也是该预设的默认值；下�
 
 ~~~bash
 DOTFILES_DIR="$HOME/.dotfiles"
-starship_source="$DOTFILES_DIR/starship/.config/starship.toml"
+starship_profile_source="$DOTFILES_DIR/starship/.config/starship/profiles/catppuccin-mocha.toml"
 preset_dir="$(mktemp -d)"
 preset_candidate="$preset_dir/catppuccin-powerline.toml"
 
 git -C "$DOTFILES_DIR" status --short --branch
-test -f "$starship_source"
+mkdir -p "${starship_profile_source%/*}"
 starship --version
 starship preset catppuccin-powerline -o "$preset_candidate"
 sed -n '1,$p' "$preset_candidate"
-diff -u "$starship_source" "$preset_candidate"
+
+if [ -f "$starship_profile_source" ]; then
+  diff -u "$starship_profile_source" "$preset_candidate"
+else
+  printf 'new profile target: %s\n' "$starship_profile_source"
+fi
 ~~~
 
 `starship preset` 使用当前已安装 Starship 随附的预设，因此输出可能随 Starship 版本变化。`diff` 退出码为 `0` 表示内容相同，`1` 表示发现预期差异，大于 `1` 才表示比较失败。若当前二进制不认识 `catppuccin-powerline`，先回到平台主线核对安装来源和版本，不要从不明站点复制一份无法追溯版本的 TOML。
@@ -399,14 +421,14 @@ diff -u "$starship_source" "$preset_candidate"
 ~~~bash
 rm -f "$preset_candidate"
 rmdir "$preset_dir"
-unset preset_candidate preset_dir starship_source
+unset preset_candidate preset_dir starship_profile_source
 ~~~
 
 如果 `rmdir` 提示目录非空，先检查残留内容，不要改用递归删除。
 
 ### 6.3 使用经过适配的 Mocha 完整配置
 
-下面内容整体保存到 `$DOTFILES_DIR/starship/.config/starship.toml`。它与第 4、5 节是三选一关系：
+下面内容整体保存到 `$DOTFILES_DIR/starship/.config/starship/profiles/catppuccin-mocha.toml`。保存文件不会自动启用它；第 7 节通过 `STARSHIP_CONFIG` 显式选择：
 
 ~~~toml
 # 为支持 JSON Schema 的编辑器提供补全与类型检查；这行不控制外观。
@@ -578,13 +600,38 @@ lavender = "#b4befe"
 crust = "#11111b"
 ~~~
 
-这份派生配置已经落实以下决定：Mocha 是唯一活动 palette；用户名与 SSH 主机名保留安全提示但不在普通本地会话重复出现；`git_state`、Java、Go、Docker 和默认关闭的 Kubernetes 延续第 4、5 节边界；`show_notifications = false` 禁止桌面通知；`line_break.disabled = false` 把输入符号放到第二行；`add_newline = true` 在相邻两次提示符之间插入一个空行，避免上一条命令或输出与下一条提示符紧贴。`line_break` 控制单个提示符内部的双行布局，`add_newline` 控制相邻提示符块之间的垂直间距，两者职责不同。
+这份 profile 已经落实以下决定：Mocha 是其中唯一的 palette；用户名与 SSH 主机名保留安全提示但不在普通本地会话重复出现；`git_state`、Java、Go、Docker 和默认关闭的 Kubernetes 延续第 4、5 节边界；`show_notifications = false` 禁止桌面通知；`line_break.disabled = false` 把输入符号放到第二行；`add_newline = true` 在相邻两次提示符之间插入一个空行，避免上一条命令或输出与下一条提示符紧贴。`line_break` 控制单个提示符内部的双行布局，`add_newline` 控制相邻提示符块之间的垂直间距，两者职责不同。
 
 上游包含的其他语言模块没有进入顶层 `format`。以后确实需要某个模块时，应把模块变量和匹配当前色块的配置一起加入，而不是把另一份完整预设拼接进来。
 
-## 7. 部署所选配置
+## 7. 部署三套配置并选择活动配置
 
-可以保留平台主线的启动基线，也可以在第 4～6 节中只选择一套完整配置保存到仓库源。保存后先模拟再部署；已有目标发生冲突时，按 dotfiles 专题备份和比较，不直接覆盖：
+只有平台主线已经用最小启动配置通过真实新会话验收并形成已知良好提交，才进入本节。此时把第 4 节写入默认源，把第 5、6 节写入各自 profile；最小启动配置不再作为第四份长期配置留在当前工作树。先确认三份源都存在且非空：
+
+~~~bash
+DOTFILES_DIR="$HOME/.dotfiles"
+starship_sources_ok=1
+
+git -C "$DOTFILES_DIR" status --short --branch
+for starship_source in \
+  "$DOTFILES_DIR/starship/.config/starship.toml" \
+  "$DOTFILES_DIR/starship/.config/starship/profiles/tokyo-night.toml" \
+  "$DOTFILES_DIR/starship/.config/starship/profiles/catppuccin-mocha.toml"; do
+  if ! test -s "$starship_source"; then
+    printf 'missing Starship source: %s\n' "$starship_source" >&2
+    starship_sources_ok=0
+  fi
+done
+
+if [ "$starship_sources_ok" -ne 1 ]; then
+  unset starship_source starship_sources_ok
+  false
+else
+  unset starship_source starship_sources_ok
+fi
+~~~
+
+三份文件仍属于同一个 `starship` package。保存后先模拟再部署；已有目标发生冲突时，按 dotfiles 专题备份和比较，不直接覆盖：
 
 ~~~bash
 DOTFILES_DIR="$HOME/.dotfiles"
@@ -605,9 +652,76 @@ test -L "$HOME/.config/starship.toml"
 readlink "$HOME/.config/starship.toml"
 ~~~
 
+实际部署后检查三份目标都由 Stow 管理：
+
+~~~bash
+managed_links_ok=1
+for managed_path in \
+  "$HOME/.config/starship.toml" \
+  "$HOME/.config/starship/profiles/tokyo-night.toml" \
+  "$HOME/.config/starship/profiles/catppuccin-mocha.toml"; do
+  if ! test -L "$managed_path"; then
+    printf 'expected managed link: %s\n' "$managed_path" >&2
+    managed_links_ok=0
+    continue
+  fi
+  readlink "$managed_path"
+done
+
+if [ "$managed_links_ok" -ne 1 ]; then
+  unset managed_links_ok managed_path
+  false
+else
+  unset managed_links_ok managed_path
+fi
+~~~
+
+### 7.1 默认配置不保存额外选择状态
+
+第 4 节位于 Starship 默认读取的 `~/.config/starship.toml`。没有 `STARSHIP_CONFIG` 时，它自然成为默认配置：
+
+~~~zsh
+unset STARSHIP_CONFIG
+exec zsh -l
+~~~
+
+`exec` 会用新的登录 Zsh 替换当前 Shell；先确认当前终端没有需要继续保留的前台任务。新 Shell 中仍可能由 `local.zsh` 再次设置 `STARSHIP_CONFIG`，因此持久配置存在时应按第 7.3 节处理。
+
+### 7.2 临时选择备用 profile
+
+只在当前终端会话选择 Tokyo Night：
+
+~~~zsh
+export STARSHIP_CONFIG="$HOME/.config/starship/profiles/tokyo-night.toml"
+exec zsh -l
+~~~
+
+选择 Catppuccin Mocha 时改用：
+
+~~~zsh
+export STARSHIP_CONFIG="$HOME/.config/starship/profiles/catppuccin-mocha.toml"
+exec zsh -l
+~~~
+
+环境变量只决定 Starship 本轮读取哪个文件，不改写任何 TOML、Stow 链接或 Git 源。新开的独立终端是否继承该选择取决于它的父进程；需要跨新会话保留时使用下一节的本机配置。
+
+### 7.3 在单台机器持久选择备用 profile
+
+三条搭建与迁移主线都按“共享 → 平台 → local → Starship”的顺序加载交互配置。因此，单台机器要长期使用备用 profile 时，先检查不入库的 `$HOME/.config/zsh/local.zsh`，再加入其中一行：
+
+~~~zsh
+# 二选一，不要同时保留两行。
+export STARSHIP_CONFIG="$HOME/.config/starship/profiles/tokyo-night.toml"
+# export STARSHIP_CONFIG="$HOME/.config/starship/profiles/catppuccin-mocha.toml"
+~~~
+
+保存后执行 `exec zsh -l`。要恢复第 4 节默认配置，应从 `local.zsh` 删除或注释这行并重新进入登录 Zsh；不要在共享配置中追加一条相反的 `unset`。`STARSHIP_CONFIG` 是交互提示符选择，不放进所有 Zsh 都会读取的 `.zshenv`。
+
+切换时不要用 `ln -sfn` 替换 `~/.config/starship.toml`，也不要把备用内容复制到默认文件：前者会破坏 Stow 所有权，后者会把临时选择变成仓库内容修改。
+
 ## 8. 字体与 Ghostty 的关系
 
-第 4 节使用 `git:`、`java:`、`go:` 等文本符号，普通等宽字体即可；第 5、6 节都使用 Powerline 分隔符和 Nerd Font 图标。选择任一预设时应同时满足：
+第 4 节默认配置使用 `git:`、`java:`、`go:` 等文本符号，普通等宽字体即可；第 5、6 节备用 profile 都使用 Powerline 分隔符和 Nerd Font 图标。选择任一备用 profile 时应同时满足：
 
 1. 系统使用 UTF-8 locale。
 2. Ghostty 选择的字体确实包含对应 glyph，字体名称以 `ghostty +list-fonts` 为准。
@@ -617,7 +731,7 @@ Ghostty 的字体、主题和配置分层见 [[Ghostty 常用配置与 Shell 集
 
 ## 9. 控制提示符性能
 
-平台主线的启动基线使用默认 `$all`，可能按上下文检查较多模块；第 4～6 节的完整配置则用显式 `format` 限定允许参与提示符的模块。遇到提示符变慢时，先测量，再减少模块或修复对应命令：
+平台主线的最小启动基线使用默认 `$all`，可能按上下文检查较多模块；最终默认配置和两个备用 profile 都用显式 `format` 限定允许参与提示符的模块。遇到提示符变慢时，先确认实际选择，再测量、减少模块或修复对应命令：
 
 ~~~bash
 starship explain
@@ -636,20 +750,48 @@ time zsh -i -c exit
 
 ## 10. 验证配置
 
-保存后先让 Starship 解析当前目录上下文：
+先确认所有配置源和部署目标仍然一一对应，再让 Starship 分别解析三份配置。命令前缀中的 `STARSHIP_CONFIG=...` 只影响紧随其后的 `starship explain`，不会持久切换当前 Shell：
 
 ~~~bash
-starship explain
+starship_configs_ok=1
+for starship_config in \
+  "$HOME/.config/starship.toml" \
+  "$HOME/.config/starship/profiles/tokyo-night.toml" \
+  "$HOME/.config/starship/profiles/catppuccin-mocha.toml"; do
+  if ! test -L "$starship_config"; then
+    printf 'expected managed link: %s\n' "$starship_config" >&2
+    starship_configs_ok=0
+    continue
+  fi
+  if ! STARSHIP_CONFIG="$starship_config" starship explain >/dev/null; then
+    printf 'Starship could not parse: %s\n' "$starship_config" >&2
+    starship_configs_ok=0
+  fi
+done
+
+if [ "$starship_configs_ok" -ne 1 ]; then
+  unset starship_config starship_configs_ok
+  false
+else
+  unset starship_config starship_configs_ok
+fi
 ~~~
 
-再检查 Zsh 配置并替换当前登录 Shell：
+三份都能被读取后，检查 Zsh 配置并替换当前登录 Shell：
 
 ~~~bash
 zsh -n "$HOME/.config/zsh/.zshrc"
 exec zsh -l
 ~~~
 
-先确认 `~/.config/starship.toml` 指向预期 dotfiles 仓库并审查对应 Git diff。然后进入普通目录、Git 仓库，以及所选顶层 `format` 对应的至少一个真实项目，确认模块只在检测条件满足时出现。只有配置包含 `$git_state` 时，才在发生 merge 或 rebase 的测试仓库中检查操作状态；只有配置包含 `$hostname` 时，才在 SSH 测试会话中检查用户名与主机名。
+进入新 Shell 后再打印实际选择并运行 `starship explain`：
+
+~~~zsh
+print -r -- "effective Starship config: ${STARSHIP_CONFIG:-$HOME/.config/starship.toml}"
+starship explain
+~~~
+
+确认有效路径与实际外观属于同一份配置。然后进入普通目录、Git 仓库，以及所选顶层 `format` 对应的至少一个真实项目，确认模块只在检测条件满足时出现。只有配置包含 `$git_state` 时，才在发生 merge 或 rebase 的测试仓库中检查操作状态；只有配置包含 `$hostname` 时，才在 SSH 测试会话中检查用户名与主机名。
 
 选择 Tokyo Night 或 Catppuccin Powerline 时，再直接打印两套配置使用的代表性 glyph，确认没有方框、问号或错位：
 
@@ -658,7 +800,9 @@ printf 'Powerline=%s%s%s OS=%s Git=%s Java=%s Go=%s Docker=%s K8s=%s Time=%s Dur
   '' '' '' '󰕈' '' '' '' '' '󱃾' '' ''
 ~~~
 
-分别在 Ghostty 明、暗外观和实际使用的 IDE 终端中检查文字对比度、分隔符衔接与所选单行或双行布局；再在普通目录和大型 Git 仓库运行 `starship timings` 比较耗时。若出现 TOML 解析错误、图标缺失或性能明显回退，先把仓库源恢复到已知良好内容并重新 `stow --restow`，再逐段定位；不要同时修改 Ghostty 主题和 Starship 配置。
+分别在 Ghostty 明、暗外观和实际使用的 IDE 终端中检查文字对比度、分隔符衔接与所选单行或双行布局；再在普通目录和大型 Git 仓库运行 `starship timings` 比较耗时。每次切换后重复三份链接检查和 `git -C "$HOME/.dotfiles" status --short`，确认选择动作没有改写链接或仓库源。若出现 TOML 解析错误、图标缺失或性能明显回退，先清除本轮 `STARSHIP_CONFIG` 或从 `local.zsh` 移除选择，回到第 4 节默认配置；配置源本身有误时才从已知良好提交恢复明确文件，只有源路径或部署关系改变时才重新运行 Stow。不要同时修改 Ghostty 主题和 Starship 配置。
+
+三份配置和默认选择全部通过后，把这次 profile 布局作为启动基线之后的一次独立 dotfiles 变更审阅并提交；具体提交边界见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库#9. Git 提交与远端边界]]。`local.zsh` 中的单机选择仍不进入 Git，也不应成为共享配置已验证的替代证据。
 
 Starship 的日志默认位于缓存目录，不进入 Git。更新、基准测试和回退流程见 [[现代终端环境更新、验证与回退]]。
 
