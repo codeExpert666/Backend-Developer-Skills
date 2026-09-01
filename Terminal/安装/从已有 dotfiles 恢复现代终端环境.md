@@ -10,7 +10,7 @@ tags:
   - GNU-Stow
   - Zsh
 created: 2026-08-30T22:24:37
-updated: 2026-09-01T11:50:15
+updated: 2026-09-01T15:50:00
 ---
 
 这条主线适用于：dotfiles 已经推送到可信远端，现在要在一台新 macOS 或 Ubuntu 上恢复同一套终端环境。单独阅读本文即可完成依赖安装、克隆、冲突处理、部署、验证和回退。
@@ -53,12 +53,73 @@ for candidate_path in \
   "$HOME/.zshenv" \
   "$HOME/.zprofile" \
   "$HOME/.zshrc" \
-  "$HOME/.config/zsh"; do
+  "$HOME/.config/zsh" \
+  "$HOME/Library/Application Support/com.mitchellh.ghostty"; do
   if [ -e "$candidate_path" ] || [ -L "$candidate_path" ]; then
     ls -ld "$candidate_path"
   fi
 done
 ```
+
+接着检查本文固定使用的 XDG 默认布局。变量未设置或为空是正常状态，不需要补写 `export`；出现 `STOP` 时不要临时清空变量继续，应先按 [[XDG 基础目录与终端配置边界]] 迁移旧路径：
+
+```sh
+xdg_layout_ok=1
+
+for xdg_name in \
+  XDG_CONFIG_HOME \
+  XDG_DATA_HOME \
+  XDG_STATE_HOME \
+  XDG_CACHE_HOME; do
+  case "$xdg_name" in
+    XDG_CONFIG_HOME) xdg_default="$HOME/.config" ;;
+    XDG_DATA_HOME)   xdg_default="$HOME/.local/share" ;;
+    XDG_STATE_HOME)  xdg_default="$HOME/.local/state" ;;
+    XDG_CACHE_HOME)  xdg_default="$HOME/.cache" ;;
+  esac
+
+  # 名称来自上面的固定列表；读取当前 Shell 参数，也能发现尚未 export 的旧赋值。
+  eval "xdg_value=\${$xdg_name-}"
+  printf '%s=%s; effective=%s\n' \
+    "$xdg_name" "${xdg_value:-not set}" "${xdg_value:-$xdg_default}"
+
+  case "$xdg_value" in
+    "") ;;
+    /*)
+      if [ "$xdg_value" != "$xdg_default" ]; then
+        printf 'STOP: standard mainline uses the default XDG layout: %s\n' \
+          "$xdg_name" >&2
+        xdg_layout_ok=0
+      fi
+      ;;
+    *)
+      printf 'STOP: %s must be an absolute path: %s\n' \
+        "$xdg_name" "$xdg_value" >&2
+      xdg_layout_ok=0
+      ;;
+  esac
+done
+
+xdg_runtime_value="${XDG_RUNTIME_DIR-}"
+printf 'XDG_RUNTIME_DIR=%s\n' "${xdg_runtime_value:-not set}"
+case "$xdg_runtime_value" in
+  ""|/*) ;;
+  *)
+    printf 'STOP: XDG_RUNTIME_DIR must be an absolute path: %s\n' \
+      "$xdg_runtime_value" >&2
+    xdg_layout_ok=0
+    ;;
+esac
+
+if [ "$xdg_layout_ok" -ne 1 ]; then
+  unset xdg_default xdg_layout_ok xdg_name xdg_runtime_value xdg_value
+  false
+else
+  unset xdg_default xdg_layout_ok xdg_name xdg_runtime_value xdg_value
+fi
+```
+
+`XDG_RUNTIME_DIR` 只观察，不在用户启动文件中建立；它应由登录会话或系统按正确权限和生命周期提供。恢复主线的 Stow 源树也按默认 `$HOME/.config` 镜像；非默认变量需要先迁移仓库契约，不能直接克隆后部署。
 
 `$SHELL` 通常是继承的登录 Shell 路径，不等于当前进程。`ps` 才观察当前进程；`getent` 或 `dscl` 观察账号记录。
 
@@ -96,7 +157,8 @@ for source_path in \
   "$HOME/.config/starship.toml" \
   "$HOME/.config/starship" \
   "$HOME/.config/atuin" \
-  "$HOME/.config/ghostty"; do
+  "$HOME/.config/ghostty" \
+  "$HOME/Library/Application Support/com.mitchellh.ghostty"; do
   if [ -e "$source_path" ] || [ -L "$source_path" ]; then
     cp -a "$source_path" "$backup_dir/"
   fi
@@ -161,17 +223,40 @@ Ubuntu 仓库中的独立工具版本可能不同。若 dotfiles 的 `README.md`
 ```sh
 fzf_root="${XDG_DATA_HOME:-$HOME/.local/share}"
 fzf_dir="$fzf_root/fzf"
-mkdir -p "$fzf_root"
+fzf_bin="$HOME/.local/bin/fzf"
+mkdir -p "$fzf_root" "$HOME/.local/bin"
 
 if [ ! -d "$fzf_dir/.git" ]; then
   git clone --depth=1 https://github.com/junegunn/fzf.git "$fzf_dir"
 fi
 
 "$fzf_dir/install" --bin
-export PATH="$fzf_dir/bin:$PATH"
-fzf --version
-fzf --zsh >/dev/null
+
+fzf_target_ok=1
+if [ -e "$fzf_bin" ] || [ -L "$fzf_bin" ]; then
+  if [ -f "$fzf_bin" ] && [ ! -L "$fzf_bin" ] && [ -x "$fzf_bin" ] \
+    && cmp -s "$fzf_dir/bin/fzf" "$fzf_bin"; then
+    printf 'reuse existing fzf: %s\n' "$fzf_bin"
+  else
+    printf 'STOP: inspect the existing fzf target: %s\n' "$fzf_bin" >&2
+    fzf_target_ok=0
+  fi
+else
+  install -m 0755 "$fzf_dir/bin/fzf" "$fzf_bin"
+fi
+
+if [ "$fzf_target_ok" -eq 1 ]; then
+  export PATH="$HOME/.local/bin:$PATH"
+  fzf --version
+  fzf --zsh >/dev/null
+  unset fzf_bin fzf_dir fzf_root fzf_target_ok
+else
+  unset fzf_bin fzf_dir fzf_root fzf_target_ok
+  false
+fi
 ```
+
+Git 仓库及安装器生成内容留在 XDG data，只有经过检查的 `fzf` 可执行文件复制到 `$HOME/.local/bin`。不要再把 `$HOME/.local/share/fzf/bin` 直接加入 PATH。
 
 安装 Starship：
 
@@ -192,7 +277,8 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh \
   -o "$installer"
 less "$installer"
-ATUIN_NO_MODIFY_PATH=1 sh "$installer"
+ATUIN_INSTALL_DIR="$HOME/.local/bin" \
+  ATUIN_NO_MODIFY_PATH=1 sh "$installer"
 rm -f "$installer"
 ```
 
@@ -202,7 +288,7 @@ rm -f "$installer"
 installer=$(mktemp)
 curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh -o "$installer"
 less "$installer"
-sh "$installer"
+sh "$installer" --bin-dir "$HOME/.local/bin"
 rm -f "$installer"
 ```
 
@@ -225,7 +311,7 @@ test -r "$antidote_dir/antidote.zsh"
 检查必要命令。Ubuntu 当前会话可能还需要临时 PATH，持久 PATH 应由恢复后的 `.zshenv` 提供：
 
 ```sh
-export PATH="$HOME/.local/bin:$HOME/.atuin/bin:$HOME/.local/share/fzf/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 
 git --version
 stow --version
@@ -283,6 +369,22 @@ for package_name in zsh atuin starship ghostty; do
     && printf 'available package: %s\n' "$package_name"
 done
 unset package_name
+```
+
+这套笔记的当前仓库契约只让 `$HOME/.local/bin` 承载直接安装的用户命令。若恢复出的 `.zshenv` 仍把 Atuin 默认目录或 fzf data 目录加入 PATH，先在旧机器或隔离环境完成 [[现代终端环境更新、验证与回退]] 中的可逆迁移，再恢复到新机器：
+
+```sh
+legacy_user_paths=$(grep -nE '\.atuin/bin|\.local/share/fzf/bin' \
+  "$DOTFILES_DIR/zsh/.zshenv" 2>/dev/null || true)
+
+if [ -n "$legacy_user_paths" ]; then
+  printf '%s\n' "$legacy_user_paths" >&2
+  unset legacy_user_paths
+  printf 'STOP: restored dotfiles still declare legacy user executable paths\n' >&2
+  false
+else
+  unset legacy_user_paths
+fi
 ```
 
 若仓库采用 [[Starship 提示符配置#7. 部署三套配置并选择活动配置|三配置布局]]，默认配置和两个备用 profile 都应已经被 Git 跟踪；恢复主线只检查仓库事实，不在新机器临时补写缺失文件：
@@ -350,6 +452,57 @@ for target_path in \
   fi
 done
 ```
+
+macOS 桌面且本次实际部署 `ghostty` package 时，还要处理会在 XDG 文件之后加载的原生配置。先只读查看 `~/Library/Application Support/com.mitchellh.ghostty/config.ghostty` 与旧名 `config`：
+
+```sh
+ghostty_native_dir="$HOME/Library/Application Support/com.mitchellh.ghostty"
+
+for ghostty_config_name in config.ghostty config; do
+  ghostty_native_config="$ghostty_native_dir/$ghostty_config_name"
+  if [ -e "$ghostty_native_config" ] || [ -L "$ghostty_native_config" ]; then
+    ls -ld "$ghostty_native_config"
+    sed -n '1,240p' "$ghostty_native_config"
+  fi
+done
+unset ghostty_config_name ghostty_native_config ghostty_native_dir
+```
+
+把仍需保留的非秘密设置人工迁入仓库源并完成审阅后，再运行可逆停用步骤：
+
+```sh
+ghostty_native_dir="$HOME/Library/Application Support/com.mitchellh.ghostty"
+ghostty_native_backup="$backup_dir/ghostty-native-config-disabled"
+mkdir -p "$ghostty_native_backup"
+
+for ghostty_config_name in config.ghostty config; do
+  ghostty_native_config="$ghostty_native_dir/$ghostty_config_name"
+  if [ -e "$ghostty_native_config" ] || [ -L "$ghostty_native_config" ]; then
+    mv "$ghostty_native_config" "$ghostty_native_backup/"
+  fi
+done
+
+ghostty_native_ok=1
+for ghostty_config_name in config.ghostty config; do
+  if [ -e "$ghostty_native_dir/$ghostty_config_name" ] \
+    || [ -L "$ghostty_native_dir/$ghostty_config_name" ]; then
+    printf 'STOP: macOS Ghostty config still overrides XDG: %s\n' \
+      "$ghostty_native_dir/$ghostty_config_name" >&2
+    ghostty_native_ok=0
+  fi
+done
+
+if [ "$ghostty_native_ok" -ne 1 ]; then
+  unset ghostty_config_name ghostty_native_backup ghostty_native_config \
+    ghostty_native_dir ghostty_native_ok
+  false
+else
+  unset ghostty_config_name ghostty_native_backup ghostty_native_config \
+    ghostty_native_dir ghostty_native_ok
+fi
+```
+
+这段命令只适用于已经决定部署 Ghostty 的 macOS 桌面；服务器或未选择该 package 的机器跳过。回退时先退出 Ghostty，再从第 3 节打印的私密备份恢复明确文件。
 
 若仓库带有受版本控制的 `scripts/deploy`，优先使用它。先模拟：
 
@@ -497,6 +650,7 @@ atuin config get auto_sync --verbose
 atuin config get search_mode --verbose
 atuin config get filter_mode --verbose
 atuin config get workspaces --verbose
+atuin config get logs.dir --verbose
 ```
 
 若仓库保存多份 Starship 配置，还要让每份受管文件至少完成一次独立解析；这不会改变当前 Shell 的选择：
@@ -513,9 +667,9 @@ done
 unset starship_config
 ```
 
-恢复主线不预设 Atuin 键必须取某个固定值，也不强制 Starship 使用某个 profile：应把 `atuin config get` 的文件值与解析值、真实 Zsh 打印的活动路径和模块来源，与 dotfiles 仓库中的受管源和 README 声明逐项比较。若结果不同，先排查配置加载路径、`STARSHIP_CONFIG` 或本机覆盖，不要为了追平本笔记而覆盖仓库已经选择的同步策略、搜索范围或提示符主题。
+恢复主线不预设 Atuin 键必须取某个固定值，也不强制 Starship 使用某个 profile：应把 `atuin config get` 的文件值与解析值、真实 Zsh 打印的活动路径和模块来源，与 dotfiles 仓库中的受管源和 README 声明逐项比较。当前标准基线把 Atuin 日志放在 `$HOME/.local/state/atuin/logs`；若可信旧仓库尚未声明 `[logs]`，先记录实际解析值，恢复完成后再把配置与旧日志迁移作为一次独立维护，不要现场覆盖仓库。其他结果不同时，也先排查配置加载路径、`STARSHIP_CONFIG` 或本机覆盖。
 
-语法检查不执行启动逻辑；只有上述受管目标都确认是链接后，`zsh -lic` 才第一次经过登录与交互启动链。随后的 `find` 不假设缓存文件的具体名称或版本，只阻止默认补全转储和 Antidote 静态脚本以普通文件形式落入配置目录；实际 cache 路径仍以仓库 `.zshrc` 与 README 的声明为准。macOS 桌面还应在首次打开 Ghostty 前确认 `~/.config/ghostty/config.ghostty` 是链接。最后打开一个全新的 Ghostty 窗口或重新建立 SSH 连接，人工检查：
+语法检查不执行启动逻辑；只有上述受管目标都确认是链接后，`zsh -lic` 才第一次经过登录与交互启动链。随后的 `find` 不假设缓存文件的具体名称或版本，只阻止默认补全转储和 Antidote 静态脚本以普通文件形式落入配置目录；实际 cache 路径仍以仓库 `.zshrc` 与 README 的声明为准。macOS 桌面还应在首次打开 Ghostty 前确认 `~/.config/ghostty/config.ghostty` 是链接，并确认原生 Ghostty 目录没有 `config.ghostty` 或 `config`。最后打开一个全新的 Ghostty 窗口或重新建立 SSH 连接，人工检查：
 
 - 没有启动报错；
 - PATH 中没有重复且错误的安装来源；

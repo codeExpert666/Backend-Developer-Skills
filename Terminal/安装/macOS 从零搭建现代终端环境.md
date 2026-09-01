@@ -12,7 +12,7 @@ tags:
   - Antidote
   - Ghostty
 created: 2026-07-19T16:30:50
-updated: 2026-09-01T14:31:31
+updated: 2026-09-01T15:50:00
 ---
 
 本文从一台尚未建立现代终端配置的 macOS 出发，完成 Ghostty + Zsh + Antidote + Starship + Atuin + zoxide + fzf 的安装，同时筛选可能存在的旧 Zsh 行为，从零建立、部署并提交一份 dotfiles 仓库。单看本文即可完成主流程。
@@ -44,7 +44,6 @@ uname -m
 printf 'inherited SHELL=%s\n' "${SHELL-}"
 ps -p $$ -o pid=,ppid=,comm=,args=
 dscl . -read "/Users/$USER" UserShell 2>/dev/null || true
-printf 'XDG_CONFIG_HOME=%s\n' "${XDG_CONFIG_HOME:-not set}"
 printf 'ZDOTDIR=%s\n' "${ZDOTDIR:-not set}"
 printf 'HISTFILE=%s\n' "${HISTFILE:-not set}"
 command -v /bin/zsh
@@ -52,6 +51,66 @@ command -v /bin/zsh
 command -v git || true
 command -v brew || true
 ```
+
+接着检查本文固定使用的 XDG 默认布局。变量未设置或为空是正常状态，不需要补写 `export`；出现 `STOP` 时不要临时清空变量继续，应先按 [[XDG 基础目录与终端配置边界]] 迁移旧路径：
+
+```sh
+xdg_layout_ok=1
+
+for xdg_name in \
+  XDG_CONFIG_HOME \
+  XDG_DATA_HOME \
+  XDG_STATE_HOME \
+  XDG_CACHE_HOME; do
+  case "$xdg_name" in
+    XDG_CONFIG_HOME) xdg_default="$HOME/.config" ;;
+    XDG_DATA_HOME)   xdg_default="$HOME/.local/share" ;;
+    XDG_STATE_HOME)  xdg_default="$HOME/.local/state" ;;
+    XDG_CACHE_HOME)  xdg_default="$HOME/.cache" ;;
+  esac
+
+  # 名称来自上面的固定列表；读取当前 Shell 参数，也能发现尚未 export 的旧赋值。
+  eval "xdg_value=\${$xdg_name-}"
+  printf '%s=%s; effective=%s\n' \
+    "$xdg_name" "${xdg_value:-not set}" "${xdg_value:-$xdg_default}"
+
+  case "$xdg_value" in
+    "") ;;
+    /*)
+      if [ "$xdg_value" != "$xdg_default" ]; then
+        printf 'STOP: standard mainline uses the default XDG layout: %s\n' \
+          "$xdg_name" >&2
+        xdg_layout_ok=0
+      fi
+      ;;
+    *)
+      printf 'STOP: %s must be an absolute path: %s\n' \
+        "$xdg_name" "$xdg_value" >&2
+      xdg_layout_ok=0
+      ;;
+  esac
+done
+
+xdg_runtime_value="${XDG_RUNTIME_DIR-}"
+printf 'XDG_RUNTIME_DIR=%s\n' "${xdg_runtime_value:-not set}"
+case "$xdg_runtime_value" in
+  ""|/*) ;;
+  *)
+    printf 'STOP: XDG_RUNTIME_DIR must be an absolute path: %s\n' \
+      "$xdg_runtime_value" >&2
+    xdg_layout_ok=0
+    ;;
+esac
+
+if [ "$xdg_layout_ok" -ne 1 ]; then
+  unset xdg_default xdg_layout_ok xdg_name xdg_runtime_value xdg_value
+  false
+else
+  unset xdg_default xdg_layout_ok xdg_name xdg_runtime_value xdg_value
+fi
+```
+
+`XDG_RUNTIME_DIR` 只观察，不在用户启动文件中建立；它应由登录会话或系统按正确权限和生命周期提供。
 
 这里有三个不同状态：
 
@@ -71,7 +130,8 @@ for candidate_path in \
   "$HOME/.zshrc" \
   "$HOME/.zlogin" \
   "$HOME/.zlogout" \
-  "$HOME/.config/zsh"; do
+  "$HOME/.config/zsh" \
+  "$HOME/Library/Application Support/com.mitchellh.ghostty"; do
   if [ -e "$candidate_path" ] || [ -L "$candidate_path" ]; then
     ls -ld "$candidate_path"
   fi
@@ -99,6 +159,7 @@ for source_path in \
   "$HOME/.zlogout" \
   "$HOME/.config/zsh" \
   "$HOME/.config/ghostty" \
+  "$HOME/Library/Application Support/com.mitchellh.ghostty" \
   "$HOME/.config/atuin" \
   "$HOME/.config/starship.toml" \
   "$HOME/.config/starship"; do
@@ -271,8 +332,6 @@ skip_global_compinit=1
 typeset -U path PATH
 [[ -d /usr/local/bin ]] && path=(/usr/local/bin $path)
 [[ -d /opt/homebrew/bin ]] && path=(/opt/homebrew/bin $path)
-[[ -d "$HOME/.local/share/fzf/bin" ]] && path=("$HOME/.local/share/fzf/bin" $path)
-[[ -d "$HOME/.atuin/bin" ]] && path=("$HOME/.atuin/bin" $path)
 [[ -d "$HOME/.local/bin" ]] && path=("$HOME/.local/bin" $path)
 export PATH
 ```
@@ -494,6 +553,10 @@ history_filter = [
   # 排除以 curl 开头且包含 Authorization: 请求头的命令。
   "^curl .*Authorization:",
 ]
+
+[logs]
+# Atuin 当前默认写入 ~/.atuin/logs；日志属于可跨进程保留但不应进入 Git 的本机状态。
+dir = "~/.local/state/atuin/logs"
 ```
 
 不要在此时运行 `atuin info`、`atuin doctor` 或真实 Zsh；配置缺失时，加载设置的过程可能先在目标路径生成普通文件。
@@ -717,6 +780,57 @@ unset optional_source
 
 ## 8. 模拟 Stow、处理冲突并实际部署
 
+Ghostty 在 macOS 还会读取 `~/Library/Application Support/com.mitchellh.ghostty/`，并且其中配置晚于 XDG 文件加载。先只读查看两个可能的旧文件，把仍需保留的非秘密设置人工迁入 dotfiles 源；不要同时保留两套会互相覆盖的配置：
+
+```sh
+ghostty_native_dir="$HOME/Library/Application Support/com.mitchellh.ghostty"
+
+for ghostty_config_name in config.ghostty config; do
+  ghostty_native_config="$ghostty_native_dir/$ghostty_config_name"
+  if [ -e "$ghostty_native_config" ] || [ -L "$ghostty_native_config" ]; then
+    ls -ld "$ghostty_native_config"
+    sed -n '1,240p' "$ghostty_native_config"
+  fi
+done
+unset ghostty_config_name ghostty_native_config ghostty_native_dir
+```
+
+完成逐项审阅和迁移后，把旧文件移动到第 2 节已经验证的私密备份，而不是删除：
+
+```sh
+ghostty_native_dir="$HOME/Library/Application Support/com.mitchellh.ghostty"
+ghostty_native_backup="$backup_dir/ghostty-native-config-disabled"
+mkdir -p "$ghostty_native_backup"
+
+for ghostty_config_name in config.ghostty config; do
+  ghostty_native_config="$ghostty_native_dir/$ghostty_config_name"
+  if [ -e "$ghostty_native_config" ] || [ -L "$ghostty_native_config" ]; then
+    mv "$ghostty_native_config" "$ghostty_native_backup/"
+  fi
+done
+
+ghostty_native_ok=1
+for ghostty_config_name in config.ghostty config; do
+  if [ -e "$ghostty_native_dir/$ghostty_config_name" ] \
+    || [ -L "$ghostty_native_dir/$ghostty_config_name" ]; then
+    printf 'STOP: macOS Ghostty config still overrides XDG: %s\n' \
+      "$ghostty_native_dir/$ghostty_config_name" >&2
+    ghostty_native_ok=0
+  fi
+done
+
+if [ "$ghostty_native_ok" -ne 1 ]; then
+  unset ghostty_config_name ghostty_native_backup ghostty_native_config \
+    ghostty_native_dir ghostty_native_ok
+  false
+else
+  unset ghostty_config_name ghostty_native_backup ghostty_native_config \
+    ghostty_native_dir ghostty_native_ok
+fi
+```
+
+回退时先退出 Ghostty，再把备份中的明确文件移回原生目录；不要恢复后同时保留内容相冲突的 XDG 文件。
+
 先模拟：
 
 ```sh
@@ -826,6 +940,7 @@ printf 'ZDOTDIR=%s\n' "$ZDOTDIR"
 antidote list
 bindkey '^R'
 atuin doctor
+atuin config get logs.dir --verbose
 zoxide --version
 fzf --version
 ```
@@ -848,6 +963,24 @@ for managed_path in \
 done
 
 git -C "$HOME/.dotfiles" status --short --branch
+
+ghostty_native_dir="$HOME/Library/Application Support/com.mitchellh.ghostty"
+ghostty_native_ok=1
+for ghostty_config_name in config.ghostty config; do
+  if [ -e "$ghostty_native_dir/$ghostty_config_name" ] \
+    || [ -L "$ghostty_native_dir/$ghostty_config_name" ]; then
+    printf 'STOP: native Ghostty config reappeared: %s\n' \
+      "$ghostty_native_dir/$ghostty_config_name" >&2
+    ghostty_native_ok=0
+  fi
+done
+
+if [ "$ghostty_native_ok" -ne 1 ]; then
+  unset ghostty_config_name ghostty_native_dir ghostty_native_ok
+  false
+else
+  unset ghostty_config_name ghostty_native_dir ghostty_native_ok
+fi
 ```
 
 Atuin 数据库、Antidote 插件和缓存、Zsh 历史可以在仓库外生成；它们不应替换上述链接，也不应出现在 dotfiles 工作树中。
@@ -933,10 +1066,10 @@ atuin stats
 
 1. 旧 Zsh 配置和历史已有私密备份，非默认来源也已纳入；
 2. 每项旧 Zsh 候选行为都有迁移、由新基线替代、继续保留或明确放弃的结论；
-3. Zsh、Atuin、Starship 与 Ghostty 的受管目标在首次真实启动前已经由 Stow 部署，启动后仍指向 `$HOME/.dotfiles`；
+3. Zsh、Atuin、Starship 与 Ghostty 的受管目标在首次真实启动前已经由 Stow 部署，启动后仍指向 `$HOME/.dotfiles`；macOS 原生 Ghostty 目录没有会覆盖 XDG 配置的 `config.ghostty` 或 `config`；
 4. 第 9 节的登录交互启动与缓存边界检查正常结束并输出 `startup-ok`；
 5. `Ctrl-R`、自动建议、语法高亮、`zi`、`Ctrl-T` 和 Starship 按预期工作；
-6. local 文件、历史、密钥、插件 clone 与缓存均未出现在 `git status`，补全与插件生成文件只位于 XDG cache；
+6. local 文件、历史、Atuin 日志、密钥、插件 clone 与缓存均未出现在 `git status`，补全与插件生成文件只位于 XDG cache，Atuin 日志位于 XDG state；
 7. dotfiles 至少有一个已知可用提交，若配置了远端则已核对推送分支；
 8. 最终三配置布局中的默认文件和两个备用 profile 都由 Stow 管理且能独立解析；未设置 `STARSHIP_CONFIG` 时使用第 4 节，切换动作不改写链接或仓库源，这次扩展已作为启动基线之后的独立变更审阅。
 

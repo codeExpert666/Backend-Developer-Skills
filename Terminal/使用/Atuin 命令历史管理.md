@@ -12,7 +12,7 @@ tags:
   - Atuin
   - 命令历史
 created: 2026-07-19T16:33:48
-updated: 2026-08-31T15:17:38
+updated: 2026-09-01T15:50:00
 ---
 
 Atuin 将命令、执行时间、工作目录、退出状态和耗时保存在本地数据库中，并提供比普通 Shell 历史更容易检索的界面。本方案把它作为 **local-first 的命令历史工具**：不注册账号也能完整使用，跨机器同步是后续按需启用的可选能力。
@@ -39,7 +39,7 @@ Atuin 导入旧历史后，原来的 Zsh 历史文件仍会继续更新。不要
 Atuin 不只是读取配置：当配置目录或 `config.toml` 不存在时，加载设置的命令可能创建目录并写入示例配置。因此，如果该文件准备由 Stow 管理，不能先运行 `atuin info`、`atuin doctor`、`atuin init` 或真实交互式 Zsh。
 
 > [!info] 配置语义核对范围
-> 本节于 2026-08-31 按 [Atuin v18.20.1](https://github.com/atuinsh/atuin/releases/tag/v18.20.1) 源码和官方 `main` 文档核对了同步、匹配方式、过滤范围、workspace 和有效配置查询。资料核对不表示任何具体机器已经运行或验证这套配置。
+> 本节于 2026-09-01 按 [Atuin v18.21.0](https://github.com/atuinsh/atuin/releases/tag/v18.21.0) 和官方 `main` 文档核对了安装目录、同步、匹配方式、过滤范围、workspace、日志目录与有效配置查询。资料核对不表示任何具体机器已经运行或验证这套配置。
 
 主线已经完成这一顺序；单独新增 Atuin 软件包时，在仓库中创建或编辑配置源：
 
@@ -90,6 +90,10 @@ history_filter = [
 
 # 如需排除整个目录，取消注释并替换成真实的绝对路径。
 # cwd_filter = ["^/absolute/path/to/private-workspace"]
+
+[logs]
+# Atuin 当前默认写入 ~/.atuin/logs；日志属于可跨进程保留但不应进入 Git 的本机状态。
+dir = "~/.local/state/atuin/logs"
 ~~~
 
 `search_mode` 决定输入文字怎样匹配历史，`filter_mode` 决定打开界面时先搜索哪一部分历史；`workspaces = true` 只是让 workspace 成为可用范围。这三项分别控制匹配算法、初始范围和范围能力，不是互相覆盖的同一开关。
@@ -134,7 +138,11 @@ atuin --version
 atuin info
 ~~~
 
+macOS 的 Homebrew 安装应解析到 Homebrew 前缀；Ubuntu 主线给官方安装器同时设置 `ATUIN_INSTALL_DIR="$HOME/.local/bin"` 与 `ATUIN_NO_MODIFY_PATH=1`，因此应解析到 `$HOME/.local/bin/atuin`。`$HOME/.atuin/bin` 是安装器的上游默认位置，只作为旧布局识别，不再加入新 PATH。
+
 若命令缺失，回到当前平台主线检查原安装来源与 PATH，不要重复运行安装器。`atuin info` 用于核对当前配置、数据库与密钥的实际位置；XDG 默认目录只是默认值，备份和恢复必须以当前输出为准。运行后再次确认 `config.toml` 仍是指向 dotfiles 的链接，而数据库、密钥和 session 位于仓库外。
+
+安装器还可能在配置目录生成 `atuin-receipt.json`。它记录本机安装信息，不是跨机器配置；主线使用 Stow `--no-folding`，因此真实的 `~/.config/atuin` 目录可以同时容纳受管 `config.toml` 链接与本机回执。不要把回执复制回 dotfiles 源。
 
 ## 4. 让 Atuin 接管 Ctrl-R
 
@@ -274,11 +282,12 @@ atuin config get auto_sync --verbose
 atuin config get search_mode --verbose
 atuin config get filter_mode --verbose
 atuin config get workspaces --verbose
+atuin config get logs.dir --verbose
 atuin doctor
 bindkey '^R'
 ~~~
 
-`atuin config get ... --verbose` 同时帮助区分配置文件中的值与叠加默认值、环境变量后的有效值。本基线预期上述四项分别解析为 `false`、`fuzzy`、`global` 和 `true`；若文件值与有效值不同，先检查环境变量和实际加载的配置路径。
+`atuin config get ... --verbose` 同时帮助区分配置文件中的值与叠加默认值、环境变量后的有效值。本基线预期上述五项分别解析为 `false`、`fuzzy`、`global`、`true` 和 `~/.local/state/atuin/logs` 对应的有效路径；若文件值与有效值不同，先检查环境变量和实际加载的配置路径。
 
 再执行一条无副作用的测试命令，按 `Ctrl-R` 搜索其中的唯一文本。若 `Ctrl-R` 打开 fzf 或行为反复变化，说明 fzf 与 Atuin 都绑定了同一按键，回到 [[zoxide 与 fzf 导航和模糊查找]] 只保留一个初始化顺序。
 
@@ -288,9 +297,11 @@ bindkey '^R'
 | Atuin 历史数据库 | 不可以 | 包含实际命令、目录和执行元数据 |
 | Atuin 加密密钥 | 不可以 | 是解密同步历史的安全边界 |
 | Atuin session 文件 | 不可以 | 本质上是服务端会话令牌 |
-| Atuin 日志和缓存 | 不可以 | 属于运行时数据，且可能含本机信息 |
+| `~/.config/atuin/atuin-receipt.json` | 不可以 | 安装器生成的本机元数据，可与受管链接并存 |
+| `~/.local/state/atuin/logs` | 不可以 | 属于持续变化的本机状态，且可能含排障信息 |
+| Atuin 缓存 | 不可以 | 可重新生成且会制造无意义差异 |
 
-Atuin 默认把数据库、密钥和 session 放在 `~/.local/share/atuin`，除非使用 XDG 环境变量或配置覆盖。该目录可以进入受保护的私有备份，但绝不能提交到 dotfiles 仓库。最后确认运行时 `config.toml` 是指向预期仓库的链接，Atuin 自检通过，并且 Git diff 只包含经过审查的通用配置。
+Atuin 默认把数据库、密钥和 session 放在 `~/.local/share/atuin`，除非使用 XDG 环境变量或配置覆盖；本基线另外把日志从上游默认的 `~/.atuin/logs` 定向到 XDG state。data 和 state 可以进入受保护的私有备份，但绝不能提交到 dotfiles 仓库。最后确认运行时 `config.toml` 是指向预期仓库的链接，Atuin 自检通过，并且 Git diff 只包含经过审查的通用配置。
 
 ## 官方参考资料
 

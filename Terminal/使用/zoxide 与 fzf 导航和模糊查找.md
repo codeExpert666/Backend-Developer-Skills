@@ -13,7 +13,7 @@ tags:
   - fzf
   - 命令行效率
 created: 2026-07-19T16:33:48
-updated: 2026-08-30T22:24:37
+updated: 2026-09-01T15:50:00
 ---
 
 zoxide 与 fzf 都能减少路径输入，但解决的问题不同：zoxide 根据使用频率记住目录，fzf 从候选文本中进行模糊选择。本方案让 zoxide 负责目录跳转、fzf 负责文件选择，并把历史搜索明确交给 [[Atuin 命令历史管理]]。
@@ -48,6 +48,14 @@ fzf --zsh >/dev/null
 ~~~
 
 最后一条成功才说明当前 fzf 提供本文使用的嵌入式 Zsh 集成。若失败，回到当前平台主线检查版本和安装来源；不要在原路径旁边再叠加一份不清楚优先级的 fzf。
+
+当前主线的路径契约如下：
+
+- macOS 的 zoxide 与 fzf 由 Homebrew 管理，二进制留在 Homebrew 前缀；
+- Ubuntu 的 fzf Git 仓库与下载内容位于 `$HOME/.local/share/fzf`，但实际命令复制为 `$HOME/.local/bin/fzf`，PATH 不再包含 data 目录；
+- Ubuntu 通过官方脚本安装的 zoxide 也写入 `$HOME/.local/bin`。
+
+`command -v` 应与当前平台的来源一致。Git 仓库位置回答“安装数据放在哪里”，PATH 中的命令位置回答“Shell 实际执行哪一份”，二者不必是同一路径。
 
 ## 3. 使用唯一的初始化顺序
 
@@ -189,7 +197,9 @@ zsh -ic 'whence -w z zi; bindkey "^T"; bindkey "^R"'
 | `Ctrl-R` 打开 fzf | fzf 加载时是否已将 `FZF_CTRL_R_COMMAND` 设为空，Atuin 是否随后初始化 |
 | 语法高亮异常 | 高亮插件是否在 fzf、Atuin、zoxide 和 Starship 之后最后加载 |
 
-zoxide 的目录评分数据库属于本机运行数据，不应提交到 Git；fzf 本身不维护需要同步的历史数据库。应进入 dotfiles 的只是 `zsh` package 中的上述环境变量和初始化逻辑，不需要为 zoxide 或 fzf 再创建独立 package。验证完成后审查该 `.zshrc` 的 Git diff；若只修改文件内容，现有 Stow 链接无需重新部署。
+zoxide 的目录评分数据库属于本机运行数据，不应提交到 Git。Linux/BSD 默认使用 XDG data，macOS 默认使用 `~/Library/Application Support` 下的平台原生位置；这两者都是受支持的数据边界，不需要为了目录外观强制迁移。只有明确要改变数据位置并完成旧数据库备份、迁移和回退验证时，才设置 zoxide 自己的 `_ZO_DATA_DIR`。
+
+fzf 本身不维护需要同步的历史数据库；Ubuntu 的 Git 安装目录属于可重新取得的用户数据，只有复制到 `$HOME/.local/bin/fzf` 的命令进入 PATH。应进入 dotfiles 的只是 `zsh` package 中的上述环境变量和初始化逻辑，不需要为 zoxide 或 fzf 再创建独立 package。验证完成后审查该 `.zshrc` 的 Git diff；若只修改文件内容，现有 Stow 链接无需重新部署。
 
 ## 官方参考资料
 

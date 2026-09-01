@@ -12,7 +12,7 @@ tags:
   - Oh-My-Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-09-01T14:31:31
+updated: 2026-09-01T15:50:00
 ---
 
 本文把正在使用的 Oh My Zsh 迁移为 Zsh + Antidote + Starship + Atuin + zoxide + fzf，同时建立或接入普通 Git dotfiles，并由 GNU Stow 部署。单看本文即可完成盘点、并行重建、切换、提交和回退。
@@ -48,6 +48,66 @@ fi
 
 command -v git stow starship atuin zoxide fzf 2>/dev/null || true
 ```
+
+接着检查本文固定使用的 XDG 默认布局。变量未设置或为空是正常状态，不需要补写 `export`；出现 `STOP` 时不要临时清空变量继续，应先按 [[XDG 基础目录与终端配置边界]] 迁移旧路径：
+
+```sh
+xdg_layout_ok=1
+
+for xdg_name in \
+  XDG_CONFIG_HOME \
+  XDG_DATA_HOME \
+  XDG_STATE_HOME \
+  XDG_CACHE_HOME; do
+  case "$xdg_name" in
+    XDG_CONFIG_HOME) xdg_default="$HOME/.config" ;;
+    XDG_DATA_HOME)   xdg_default="$HOME/.local/share" ;;
+    XDG_STATE_HOME)  xdg_default="$HOME/.local/state" ;;
+    XDG_CACHE_HOME)  xdg_default="$HOME/.cache" ;;
+  esac
+
+  # 名称来自上面的固定列表；读取当前 Shell 参数，也能发现尚未 export 的旧赋值。
+  eval "xdg_value=\${$xdg_name-}"
+  printf '%s=%s; effective=%s\n' \
+    "$xdg_name" "${xdg_value:-not set}" "${xdg_value:-$xdg_default}"
+
+  case "$xdg_value" in
+    "") ;;
+    /*)
+      if [ "$xdg_value" != "$xdg_default" ]; then
+        printf 'STOP: standard mainline uses the default XDG layout: %s\n' \
+          "$xdg_name" >&2
+        xdg_layout_ok=0
+      fi
+      ;;
+    *)
+      printf 'STOP: %s must be an absolute path: %s\n' \
+        "$xdg_name" "$xdg_value" >&2
+      xdg_layout_ok=0
+      ;;
+  esac
+done
+
+xdg_runtime_value="${XDG_RUNTIME_DIR-}"
+printf 'XDG_RUNTIME_DIR=%s\n' "${xdg_runtime_value:-not set}"
+case "$xdg_runtime_value" in
+  ""|/*) ;;
+  *)
+    printf 'STOP: XDG_RUNTIME_DIR must be an absolute path: %s\n' \
+      "$xdg_runtime_value" >&2
+    xdg_layout_ok=0
+    ;;
+esac
+
+if [ "$xdg_layout_ok" -ne 1 ]; then
+  unset xdg_default xdg_layout_ok xdg_name xdg_runtime_value xdg_value
+  false
+else
+  unset xdg_default xdg_layout_ok xdg_name xdg_runtime_value xdg_value
+fi
+```
+
+`XDG_RUNTIME_DIR` 只观察，不在用户启动文件中建立；它应由登录会话或系统按正确权限和生命周期提供。
 
 检查主配置和 custom 目录：
 
@@ -190,13 +250,37 @@ sudo apt install -y zsh git stow curl ca-certificates less
 ```zsh
 fzf_root="${XDG_DATA_HOME:-$HOME/.local/share}"
 fzf_dir="$fzf_root/fzf"
-mkdir -p "$fzf_root"
+fzf_bin="$HOME/.local/bin/fzf"
+mkdir -p "$fzf_root" "$HOME/.local/bin"
 [[ -d "$fzf_dir/.git" ]] \
   || git clone --depth=1 https://github.com/junegunn/fzf.git "$fzf_dir"
 "$fzf_dir/install" --bin
-path=("$fzf_dir/bin" $path)
-fzf --zsh >/dev/null
+
+fzf_target_ok=1
+if [[ -e "$fzf_bin" || -L "$fzf_bin" ]]; then
+  if [[ -f "$fzf_bin" && ! -L "$fzf_bin" && -x "$fzf_bin" ]] \
+    && cmp -s "$fzf_dir/bin/fzf" "$fzf_bin"; then
+    printf 'reuse existing fzf: %s\n' "$fzf_bin"
+  else
+    print -u2 "STOP: inspect the existing fzf target: $fzf_bin"
+    fzf_target_ok=0
+  fi
+else
+  install -m 0755 "$fzf_dir/bin/fzf" "$fzf_bin"
+fi
+
+if (( fzf_target_ok == 1 )); then
+  path=("$HOME/.local/bin" $path)
+  fzf --version
+  fzf --zsh >/dev/null
+  unset fzf_bin fzf_dir fzf_root fzf_target_ok
+else
+  unset fzf_bin fzf_dir fzf_root fzf_target_ok
+  false
+fi
 ```
+
+Git 仓库及安装器生成内容留在 XDG data，只有经过检查的 `fzf` 可执行文件复制到 `$HOME/.local/bin`。不要再把 `$HOME/.local/share/fzf/bin` 直接加入 PATH。
 
 安装 Starship、Atuin 与 zoxide；每个脚本都先在 `less` 中审阅：
 
@@ -214,17 +298,20 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh \
   -o "$installer"
 less "$installer"
-ATUIN_NO_MODIFY_PATH=1 sh "$installer"
+ATUIN_INSTALL_DIR="$HOME/.local/bin" \
+  ATUIN_NO_MODIFY_PATH=1 sh "$installer"
 rm -f "$installer"
 
 installer=$(mktemp)
 curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh -o "$installer"
 less "$installer"
-sh "$installer"
+sh "$installer" --bin-dir "$HOME/.local/bin"
 rm -f "$installer"
 
-path=("$HOME/.local/bin" "$HOME/.atuin/bin" $path)
+path=("$HOME/.local/bin" $path)
 ```
+
+Atuin 与 zoxide 都定向到统一的用户命令目录；安装器不修改旧 Oh My Zsh 启动文件，持久 PATH 只在新 `.zshenv` 中声明。
 
 ### 4.3 两个平台共同安装 Antidote
 
@@ -541,6 +628,10 @@ history_filter = [
   # 排除以 curl 开头且包含 Authorization: 请求头的命令。
   "^curl .*Authorization:",
 ]
+
+[logs]
+# Atuin 当前默认写入 ~/.atuin/logs；日志属于可跨进程保留但不应进入 Git 的本机状态。
+dir = "~/.local/state/atuin/logs"
 ```
 
 Atuin 在平台主线、迁移主线和 [[Atuin 命令历史管理]] 中有意使用同一套最终基线，不存在等待后续替换的另一份“完整配置”。`search_mode = "fuzzy"` 固定文字匹配方式，`filter_mode = "global"` 固定初始搜索范围，`workspaces = true` 只启用 workspace 范围能力。
@@ -676,8 +767,6 @@ skip_global_compinit=1
 typeset -U path PATH
 [[ -d /usr/local/bin ]] && path=(/usr/local/bin $path)
 [[ -d /opt/homebrew/bin ]] && path=(/opt/homebrew/bin $path)
-[[ -d "$HOME/.local/share/fzf/bin" ]] && path=("$HOME/.local/share/fzf/bin" $path)
-[[ -d "$HOME/.atuin/bin" ]] && path=("$HOME/.atuin/bin" $path)
 [[ -d "$HOME/.local/bin" ]] && path=("$HOME/.local/bin" $path)
 export PATH
 ```
@@ -748,6 +837,7 @@ type z
 type zi
 starship --version
 atuin doctor
+atuin config get logs.dir --verbose
 fzf --version
 zsh -lic '
   [[ "$(typeset -p ZDOTDIR)" != export\ * ]] || {

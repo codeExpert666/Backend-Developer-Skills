@@ -12,7 +12,7 @@ tags:
   - Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-09-01T14:31:31
+updated: 2026-09-01T15:50:00
 ---
 
 本文从一台以 Bash 为起点的 Ubuntu 出发，完成 Zsh + Antidote + Starship + Atuin + zoxide + fzf 的安装，同时筛选旧 Bash 配置、从零建立 dotfiles、部署并形成已知良好提交。单看本文即可完成本地或 SSH 主流程。
@@ -43,7 +43,6 @@ printf 'account login shell: %s\n' "$account_shell"
 printf 'inherited SHELL: %s\n' "${SHELL-}"
 ps -p $$ -o pid=,ppid=,comm=,args=
 
-printf 'XDG_CONFIG_HOME: %s\n' "${XDG_CONFIG_HOME:-not set}"
 printf 'ZDOTDIR: %s\n' "${ZDOTDIR:-not set}"
 printf 'HISTFILE: %s\n' "${HISTFILE:-not set}"
 printf 'SSH connection: %s\n' "${SSH_CONNECTION:-local session}"
@@ -55,6 +54,66 @@ cat /etc/os-release
 uname -m
 unset account_shell
 ```
+
+接着检查本文固定使用的 XDG 默认布局。变量未设置或为空是正常状态，不需要补写 `export`；出现 `STOP` 时不要临时清空变量继续，应先按 [[XDG 基础目录与终端配置边界]] 迁移旧路径：
+
+```sh
+xdg_layout_ok=1
+
+for xdg_name in \
+  XDG_CONFIG_HOME \
+  XDG_DATA_HOME \
+  XDG_STATE_HOME \
+  XDG_CACHE_HOME; do
+  case "$xdg_name" in
+    XDG_CONFIG_HOME) xdg_default="$HOME/.config" ;;
+    XDG_DATA_HOME)   xdg_default="$HOME/.local/share" ;;
+    XDG_STATE_HOME)  xdg_default="$HOME/.local/state" ;;
+    XDG_CACHE_HOME)  xdg_default="$HOME/.cache" ;;
+  esac
+
+  # 名称来自上面的固定列表；读取当前 Shell 参数，也能发现尚未 export 的旧赋值。
+  eval "xdg_value=\${$xdg_name-}"
+  printf '%s=%s; effective=%s\n' \
+    "$xdg_name" "${xdg_value:-not set}" "${xdg_value:-$xdg_default}"
+
+  case "$xdg_value" in
+    "") ;;
+    /*)
+      if [ "$xdg_value" != "$xdg_default" ]; then
+        printf 'STOP: standard mainline uses the default XDG layout: %s\n' \
+          "$xdg_name" >&2
+        xdg_layout_ok=0
+      fi
+      ;;
+    *)
+      printf 'STOP: %s must be an absolute path: %s\n' \
+        "$xdg_name" "$xdg_value" >&2
+      xdg_layout_ok=0
+      ;;
+  esac
+done
+
+xdg_runtime_value="${XDG_RUNTIME_DIR-}"
+printf 'XDG_RUNTIME_DIR=%s\n' "${xdg_runtime_value:-not set}"
+case "$xdg_runtime_value" in
+  ""|/*) ;;
+  *)
+    printf 'STOP: XDG_RUNTIME_DIR must be an absolute path: %s\n' \
+      "$xdg_runtime_value" >&2
+    xdg_layout_ok=0
+    ;;
+esac
+
+if [ "$xdg_layout_ok" -ne 1 ]; then
+  unset xdg_default xdg_layout_ok xdg_name xdg_runtime_value xdg_value
+  false
+else
+  unset xdg_default xdg_layout_ok xdg_name xdg_runtime_value xdg_value
+fi
+```
+
+`XDG_RUNTIME_DIR` 只观察，不在用户启动文件中建立；它应由登录会话或系统按正确权限和生命周期提供。
 
 `getent passwd` 的末字段、继承的 `$SHELL` 和 `ps` 显示的当前进程是三个不同状态。本文直到新配置通过真实启动测试后才执行 `chsh`。
 
@@ -195,17 +254,40 @@ Ubuntu LTS 中的 fzf 可能不能满足 `fzf --zsh` 与 zoxide 交互选择的�
 ```bash
 fzf_root="${XDG_DATA_HOME:-$HOME/.local/share}"
 fzf_dir="$fzf_root/fzf"
-mkdir -p "$fzf_root"
+fzf_bin="$HOME/.local/bin/fzf"
+mkdir -p "$fzf_root" "$HOME/.local/bin"
 
 if [ ! -d "$fzf_dir/.git" ]; then
   git clone --depth=1 https://github.com/junegunn/fzf.git "$fzf_dir"
 fi
 
 "$fzf_dir/install" --bin
-export PATH="$fzf_dir/bin:$PATH"
-fzf --version
-fzf --zsh >/dev/null
+
+fzf_target_ok=1
+if [ -e "$fzf_bin" ] || [ -L "$fzf_bin" ]; then
+  if [ -f "$fzf_bin" ] && [ ! -L "$fzf_bin" ] && [ -x "$fzf_bin" ] \
+    && cmp -s "$fzf_dir/bin/fzf" "$fzf_bin"; then
+    printf 'reuse existing fzf: %s\n' "$fzf_bin"
+  else
+    printf 'STOP: inspect the existing fzf target: %s\n' "$fzf_bin" >&2
+    fzf_target_ok=0
+  fi
+else
+  install -m 0755 "$fzf_dir/bin/fzf" "$fzf_bin"
+fi
+
+if [ "$fzf_target_ok" -eq 1 ]; then
+  export PATH="$HOME/.local/bin:$PATH"
+  fzf --version
+  fzf --zsh >/dev/null
+  unset fzf_bin fzf_dir fzf_root fzf_target_ok
+else
+  unset fzf_bin fzf_dir fzf_root fzf_target_ok
+  false
+fi
 ```
+
+Git 仓库及安装器生成内容留在 XDG data，只有经过检查的 `fzf` 可执行文件复制到 `$HOME/.local/bin`。不要再把 `$HOME/.local/share/fzf/bin` 直接加入 PATH。
 
 若 `apt-cache policy fzf` 显示受信任仓库的候选版本满足当前 zoxide 和 `fzf --zsh` 的要求，也可以只使用 APT；同一台机器不要并存两个不清楚优先级的来源。
 
@@ -225,17 +307,18 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/atuinsh/atuin/releases/latest/download/atuin-installer.sh \
   -o "$installer"
 less "$installer"
-ATUIN_NO_MODIFY_PATH=1 sh "$installer"
+ATUIN_INSTALL_DIR="$HOME/.local/bin" \
+  ATUIN_NO_MODIFY_PATH=1 sh "$installer"
 rm -f "$installer"
 
 installer=$(mktemp)
 curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh -o "$installer"
 less "$installer"
-sh "$installer"
+sh "$installer" --bin-dir "$HOME/.local/bin"
 rm -f "$installer"
 ```
 
-`ATUIN_NO_MODIFY_PATH=1` 阻止安装器改写多个 Shell profile；PATH 由稍后的 dotfiles 统一维护。
+`ATUIN_INSTALL_DIR` 把 Atuin 二进制定向到统一的用户命令目录，`ATUIN_NO_MODIFY_PATH=1` 阻止安装器改写多个 Shell profile；zoxide 也使用同一个 `--bin-dir`。PATH 由稍后的 dotfiles 统一维护。
 
 安装 Antidote 到 XDG 数据目录：
 
@@ -254,7 +337,7 @@ test -r "$antidote_dir/antidote.zsh"
 当前 Bash 临时补上用户路径并验证；持久路径随后写入 `.zshenv`：
 
 ```bash
-export PATH="$HOME/.local/bin:$HOME/.atuin/bin:$HOME/.local/share/fzf/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 
 starship --version
 atuin --version
@@ -336,8 +419,6 @@ skip_global_compinit=1
 typeset -U path PATH
 [[ -d /usr/local/bin ]] && path=(/usr/local/bin $path)
 [[ -d /opt/homebrew/bin ]] && path=(/opt/homebrew/bin $path)
-[[ -d "$HOME/.local/share/fzf/bin" ]] && path=("$HOME/.local/share/fzf/bin" $path)
-[[ -d "$HOME/.atuin/bin" ]] && path=("$HOME/.atuin/bin" $path)
 [[ -d "$HOME/.local/bin" ]] && path=("$HOME/.local/bin" $path)
 export PATH
 ```
@@ -554,6 +635,10 @@ history_filter = [
   # 排除以 curl 开头且包含 Authorization: 请求头的命令。
   "^curl .*Authorization:",
 ]
+
+[logs]
+# Atuin 当前默认写入 ~/.atuin/logs；日志属于可跨进程保留但不应进入 Git 的本机状态。
+dir = "~/.local/state/atuin/logs"
 ```
 
 此处先写仓库源，不运行 `atuin info`、`atuin doctor` 或 `atuin init`。这些命令会加载设置，并可能在配置缺失时创建普通 `config.toml`；第 7 节先让 Stow 拥有目标路径。
@@ -908,6 +993,7 @@ antidote list
 bindkey '^R'
 starship --version
 atuin doctor
+atuin config get logs.dir --verbose
 zoxide --version
 fzf --version
 zsh -lic 'printf "startup-ok\n"'
@@ -1005,10 +1091,11 @@ unset sanitized_bash_history sanitized_zsh_history
 
 1. 原始 Bash/Zsh 配置与历史有通过权限和文件检查的私密备份；
 2. 每项旧 Bash 候选行为都有迁移、由新基线替代、继续保留或明确放弃的结论，没有悬空清单；
-3. Zsh、Atuin 与 Starship 的受管目标在首次真实启动前已经由 Stow 部署，启动后仍指向 `$HOME/.dotfiles`；local 文件是真实私有文件，补全与插件生成文件只位于 XDG cache；
+3. Zsh、Atuin 与 Starship 的受管目标在首次真实启动前已经由 Stow 部署，启动后仍指向 `$HOME/.dotfiles`；local 文件是真实私有文件，补全与插件生成文件只位于 XDG cache，Atuin 日志位于 XDG state；
 4. 新登录与适用的 SSH 非交互场景都通过，账号登录 Shell、`$SHELL` 和当前进程的差异已理解；
-5. dotfiles 至少有一个已知可用提交，历史与同步操作发生在该基线之后；
-6. 最终三配置布局中的默认文件和两个备用 profile 都由 Stow 管理且能独立解析；未设置 `STARSHIP_CONFIG` 时使用第 4 节，切换动作不改写链接或仓库源，这次扩展已作为启动基线之后的独立变更审阅。
+5. Starship、Atuin、zoxide 与 Git 版 fzf 等直接安装的用户命令都从 `$HOME/.local/bin` 暴露给 PATH，没有遗留 `$HOME/.atuin/bin` 或 fzf data 目录的 PATH 项；
+6. dotfiles 至少有一个已知可用提交，历史与同步操作发生在该基线之后；
+7. 最终三配置布局中的默认文件和两个备用 profile 都由 Stow 管理且能独立解析；未设置 `STARSHIP_CONFIG` 时使用第 4 节，切换动作不改写链接或仓库源，这次扩展已作为启动基线之后的独立变更审阅。
 
 需要更新、排障或回退时打开 [[现代终端环境更新、验证与回退]]；需要深入理解启动文件、平台拆分或插件顺序时打开 [[Zsh 与 Antidote 跨机器配置管理]]。
 
