@@ -10,10 +10,10 @@ tags:
   - Ghostty
   - Zsh
 created: 2026-07-19T16:35:26
-updated: 2026-08-31T13:18:23
+updated: 2026-09-02T20:19:19
 ---
 
-Ghostty 是本地计算机上的终端模拟器，负责窗口、字体、配色、标签页、分屏和终端协议；它不负责 Zsh 插件、提示符、命令历史或目录跳转。完整组件关系见 [[现代终端环境搭建概览]]，Shell 配置见 [[Zsh 与 Antidote 跨机器配置管理]]，配置源与实际路径的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
+Ghostty 是本地计算机上的终端模拟器，负责窗口、字体、配色、标签页、分屏和终端协议；它不负责 Zsh 插件、提示符、命令历史或目录跳转。终端模拟器、TTY、PTY 与 Shell 的通用模型见 [[终端、TTY、PTY 与 Shell 的关系]]，完整组件关系见 [[现代终端环境搭建概览]]，Shell 配置见 [[Zsh 与 Antidote 跨机器配置管理]]，配置源与实际路径的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
 
 > [!tip] 何时打开本文
 > macOS 主线已经在首次启动 Ghostty 前部署了最小受管配置。只有要改变配置归属、定制字体、主题、分层配置、Shell Integration，或排查 SSH terminfo 时，才继续本文。

@@ -13,7 +13,7 @@ tags:
   - SSH
   - OpenSSH
 created: 2026-07-21T00:43:10
-updated: 2026-07-26T19:40:18
+updated: 2026-09-02T20:19:19
 ---
 
 OpenSSH 不是一条命令，而是一组分工不同的程序。本篇围绕密钥登录与服务端排查主线，集中解释 `ssh`、`ssh-keygen`、`ssh-keyscan` 和 `sshd` 的常用方式、选项边界与影响范围。
@@ -461,6 +461,7 @@ man sshd_config
 - [[Linux 主机防火墙与 UFW 基础]]
 - [[systemd 服务与日志基础]]
 - [[使用 Tailscale 访问 Linux 主机]]
+- [[终端、TTY、PTY 与 Shell 的关系]]
 - [[Shell 命令结构、类型与帮助系统]]
 - [[Shell 路径、变量、引用与展开]]
 - [[Shell 标准流、管道、重定向与退出状态]]
