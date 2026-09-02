@@ -11,7 +11,7 @@ tags:
   - Starship
   - Zsh
 created: 2026-07-19T16:35:26
-updated: 2026-09-01T11:50:15
+updated: 2026-09-02T17:02:36
 ---
 
 Starship 是独立的跨 Shell 提示符程序，只负责根据当前目录、Git 仓库和项目文件渲染 prompt。它不提供 Zsh 插件管理、命令历史、目录数据库、模糊查找或终端主题；这些职责分别属于 Antidote、Atuin、zoxide、fzf 和 Ghostty。完整分层见 [[现代终端环境搭建概览]]，配置源与默认路径的部署关系见 [[使用 Git 与 GNU Stow 搭建 dotfiles 仓库]]。
@@ -164,14 +164,15 @@ error_symbol = "[>](bold red)"
 
 ## 5. 备用配置：Tokyo Night 派生预设
 
-Tokyo Night 是 [Starship 官方预设列表](https://starship.rs/presets/) 收录的社区预设，本文于 2026-08-31 核对了其页面和 TOML。上游版本使用 Nerd Font、固定深色配色、操作系统、目录、Git、Node.js、Bun、Rust、Go、PHP 与时间模块；下面的派生配置保留其视觉结构，同时按本文的后端开发边界补回 SSH 身份、Git 操作状态、Java、Docker、Kubernetes 和长命令耗时。它不是 Starship 默认配置，也不与第 4 节叠加。
+Tokyo Night 是 [Starship 官方预设列表](https://starship.rs/presets/) 收录的社区预设，本文于 2026-09-02 核对了其页面、TOML 与相关配置选项。上游版本使用 Nerd Font、固定深色配色、操作系统、目录、Git、Node.js、Bun、Rust、Go、PHP 与时间模块；下面的派生配置保留其分段配色，并把 SSH 身份并入首个浅蓝色块，同时按本文的后端开发边界补回 Git 操作状态、Java、Docker、Kubernetes 和长命令耗时。它不是 Starship 默认配置，也不与第 4 节叠加。
 
 | 审阅项 | 上游 Tokyo Night | 本文派生配置 |
 | --- | --- | --- |
-| SSH 身份 | 不含 username、hostname | 保留用户名和仅 SSH 显示的主机名 |
+| SSH 身份 | 不含 username、hostname | 用户名与仅 SSH 显示的主机名组成 user@host，与系统图标共用浅蓝色块 |
 | Git | 分支、工作区状态 | 额外显示 merge、rebase 等操作状态 |
 | 开发模块 | Node.js、Bun、Rust、Go、PHP | Java、Go、Docker；Kubernetes 默认关闭 |
 | 末端信息 | 当前时间 | 长命令耗时和当前时间 |
+| 行布局 | 通过 `\n$character` 使用双行布局 | 保留双行，并显式在每次新提示符前留一个空行 |
 | 写入位置 | 官网命令直接指定运行时路径 | 先生成临时候选，再更新 dotfiles 中的备用 profile |
 
 ### 5.1 先确认字体与明暗主题边界
@@ -214,27 +215,31 @@ unset preset_candidate preset_dir starship_profile_source
 
 ### 5.3 使用经过适配的完整配置
 
+提示符采用“第一行显示状态、第二行输入命令”的双行布局，并在上一条命令的输出与下一次提示符之间留一个空行。系统图标与满足显示条件的 `user@host` 共用首个浅蓝色块，再衔接目录等后续色块。
+
 下面内容整体保存到 `$DOTFILES_DIR/starship/.config/starship/profiles/tokyo-night.toml`。保存文件不会自动启用它；第 7 节通过 `STARSHIP_CONFIG` 显式选择：
 
 ~~~toml
 # 为支持 JSON Schema 的编辑器提供补全与类型检查；这行不控制外观。
 "$schema" = "https://starship.rs/config-schema.json"
 
-# 不在相邻两次提示符之间额外插入空行；format 内仍会在输入符号前主动换行。
-add_newline = false
+# 在每次新提示符前插入一个空行；format 末尾的 \n 继续把输入符号放到第二行。
+add_newline = true
 
 # 保留明确的扫描和外部命令超时，便于排查大型仓库中的提示符延迟。
 scan_timeout = 30
 command_timeout = 500
 
 # 顶层 format 同时决定模块顺序和允许出现的模块。
-# 用户名与主机名位于彩色区块之前，只在 SSH 或高权限身份等模块条件满足时出现。
+# 系统图标与按条件显示的 user@host 共用首个浅蓝色块。
 # 目录、Git、语言/容器、耗时/时间分别使用四段 Tokyo Night 色块。
+# 首块右侧的背景色空格统一写在顶层，身份模块隐藏时仍保留完整留白。
 format = """
-$username\
-$hostname\
 [░▒▓](#a3aed2)\
 $os\
+$username\
+$hostname\
+[ ](bg:#a3aed2)\
 [](bg:#769ff0 fg:#a3aed2)\
 $directory\
 [](fg:#769ff0 bg:#394260)\
@@ -253,23 +258,26 @@ $time\
 \n$character"""
 
 # username 默认不会在普通本地会话中始终显示；SSH 或 root 等场景由模块规则决定。
+# 普通身份采用深色文字；root 使用同一浅蓝背景上的深红色强调。
+# 用户名前的两个空格拉开与系统图标的距离，并随用户名模块一起显示或隐藏。
 [username]
-style_user = "bold #e0af68"
-style_root = "bold #f7768e"
-format = "[$user]($style) "
+show_always = false
+style_user = "bold fg:#090c0c bg:#a3aed2"
+style_root = "bold fg:#8c2432 bg:#a3aed2"
+format = "[  $user]($style)"
 
-# 主机名只在 SSH 会话中显示，与 username 一起构成醒目的身份安全提示。
+# 主机名只在 SSH 会话中显示；@ 随本模块一起隐藏，与用户名共用背景色。
 [hostname]
 ssh_only = true
 ssh_symbol = ""
-style = "bold #e0af68"
-format = "[$hostname]($style) "
+style = "bold fg:#090c0c bg:#a3aed2"
+format = "[@$hostname]($style)"
 
-# 操作系统图标构成第一段；图标依赖 Nerd Font。
+# 操作系统图标与身份信息共用第一段；图标依赖 Nerd Font，右侧留白由顶层统一补齐。
 [os]
 disabled = false
 style = "bg:#a3aed2 fg:#090c0c"
-format = "[ $symbol ]($style)"
+format = "[ $symbol]($style)"
 
 [os.symbols]
 Windows = "󰍲"
@@ -366,6 +374,12 @@ success_symbol = "[❯](bold #9ece6a)"
 error_symbol = "[❯](bold #f7768e)"
 vimcmd_symbol = "[❮](bold #9ece6a)"
 ~~~
+
+`add_newline = true` 控制新提示符前的空行，`\n$character` 控制单个提示符内部的换行。二者同时保留后，命令输出与下一次提示符有清楚的分隔，输入符号仍位于第二行。
+
+身份显示条件保持按需触发：普通本地用户未触发 username 模块时，首块只显示系统图标；SSH 会话显示 `user@host`；root 的用户名使用深红色。系统图标与用户名之间保留两个空格，留白写在 username 的 `format` 内，身份隐藏时一起消失。`@` 放在 hostname 的 `format` 内，主机名隐藏时不会留下孤立的 `@`。模块内的空格与顶层 `[ ](bg:#a3aed2)` 都带背景色，让各场景下的首块连续，并在分隔符前保留一个空格。
+
+启用后，先在 SSH 会话连续运行 `pwd` 和 `printf 'ok\n'`，检查两次新提示符前都有留白、身份信息位于同一色块、输入符号仍在第二行；再在普通本地用户会话和较窄窗口中检查身份隐藏后的留白及色块衔接。完整的配置选择、字体和恢复检查见第 7、10 节。
 
 与上游相比，本配置没有保留 Node.js、Bun、Rust 和 PHP；只有确实用于日常项目时，才把对应模块同时加入顶层 `format` 和语言色块配置。若不需要始终显示时间，不能只把 `[time]` 改为禁用：还要从顶层 `format` 移除 `$time`，并决定是否保留最后一段。最后一段只剩 `$cmd_duration` 时，普通短命令之后会出现没有内容的色块，必要时应把耗时模块移出 Powerline 色块再单独显示。
 

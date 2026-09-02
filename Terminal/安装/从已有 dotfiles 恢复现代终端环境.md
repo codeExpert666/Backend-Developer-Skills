@@ -10,7 +10,7 @@ tags:
   - GNU-Stow
   - Zsh
 created: 2026-08-30T22:24:37
-updated: 2026-09-01T15:50:00
+updated: 2026-09-02T19:05:45
 ---
 
 这条主线适用于：dotfiles 已经推送到可信远端，现在要在一台新 macOS 或 Ubuntu 上恢复同一套终端环境。单独阅读本文即可完成依赖安装、克隆、冲突处理、部署、验证和回退。
@@ -649,6 +649,7 @@ unset unexpected_generated zsh_config_dir
 atuin config get auto_sync --verbose
 atuin config get search_mode --verbose
 atuin config get filter_mode --verbose
+atuin config get search.shells --verbose
 atuin config get workspaces --verbose
 atuin config get logs.dir --verbose
 ```
@@ -667,7 +668,7 @@ done
 unset starship_config
 ```
 
-恢复主线不预设 Atuin 键必须取某个固定值，也不强制 Starship 使用某个 profile：应把 `atuin config get` 的文件值与解析值、真实 Zsh 打印的活动路径和模块来源，与 dotfiles 仓库中的受管源和 README 声明逐项比较。当前标准基线把 Atuin 日志放在 `$HOME/.local/state/atuin/logs`；若可信旧仓库尚未声明 `[logs]`，先记录实际解析值，恢复完成后再把配置与旧日志迁移作为一次独立维护，不要现场覆盖仓库。其他结果不同时，也先排查配置加载路径、`STARSHIP_CONFIG` 或本机覆盖。
+恢复主线不预设可信旧仓库中的 Atuin 键必须取某个固定值，也不强制 Starship 使用某个 profile：应把 `atuin config get` 的文件值与解析值、真实 Zsh 打印的活动路径和模块来源，与 dotfiles 仓库中的受管源和 README 声明逐项比较。当前标准基线把 Atuin 日志放在 `$HOME/.local/state/atuin/logs`，并让 `search.shells` 包含空字符串、`bash` 与 `zsh`；若恢复结果仍是默认 `auto`，从 Zsh 打开的 `Ctrl-R` 不会显示标记为 Bash 的导入记录。可信旧仓库尚未声明这些设置时，先记录实际解析值，恢复完成后再把配置与旧状态迁移作为一次独立维护，不要现场覆盖仓库。其他结果不同时，也先排查配置加载路径、`STARSHIP_CONFIG` 或本机覆盖。
 
 语法检查不执行启动逻辑；只有上述受管目标都确认是链接后，`zsh -lic` 才第一次经过登录与交互启动链。随后的 `find` 不假设缓存文件的具体名称或版本，只阻止默认补全转储和 Antidote 静态脚本以普通文件形式落入配置目录；实际 cache 路径仍以仓库 `.zshrc` 与 README 的声明为准。macOS 桌面还应在首次打开 Ghostty 前确认 `~/.config/ghostty/config.ghostty` 是链接，并确认原生 Ghostty 目录没有 `config.ghostty` 或 `config`。最后打开一个全新的 Ghostty 窗口或重新建立 SSH 连接，人工检查：
 

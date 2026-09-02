@@ -12,7 +12,7 @@ tags:
   - Oh-My-Zsh
   - Antidote
 created: 2026-07-19T16:30:50
-updated: 2026-09-01T15:50:00
+updated: 2026-09-02T19:05:45
 ---
 
 本文把正在使用的 Oh My Zsh 迁移为 Zsh + Antidote + Starship + Atuin + zoxide + fzf，同时建立或接入普通 Git dotfiles，并由 GNU Stow 部署。单看本文即可完成盘点、并行重建、切换、提交和回退。
@@ -608,8 +608,8 @@ inline_height = 20
 # 在搜索界面可按 Ctrl-S 临时循环其他匹配模式。
 search_mode = "fuzzy"
 
-# 打开交互搜索时先检索全部历史；当前还支持 host、session、directory、workspace 和 session-preload。
-# 进入界面后可用 Ctrl-R 循环 search.filters 中启用的过滤范围；本基线不覆盖该列表。
+# 默认不按主机、会话、目录或 workspace 缩小搜索范围；Shell 范围由后面的 [search].shells 决定。
+# 进入界面后可用 Ctrl-R 循环 search.filters 中启用的上下文范围；本基线不覆盖该列表。
 filter_mode = "global"
 
 # 启用 workspace 过滤能力：在 Git 仓库中可检索整个仓库树，而不只当前目录。
@@ -629,12 +629,17 @@ history_filter = [
   "^curl .*Authorization:",
 ]
 
+[search]
+# 同时检索当前 Zsh、可能导入的旧 Bash，以及旧版 Atuin 没有记录 Shell 的历史。
+# 空字符串表示 Shell 未知；显式列出范围，避免默认 auto 在 Zsh 中隐藏 Bash 导入记录。
+shells = ["", "bash", "zsh"]
+
 [logs]
 # Atuin 当前默认写入 ~/.atuin/logs；日志属于可跨进程保留但不应进入 Git 的本机状态。
 dir = "~/.local/state/atuin/logs"
 ```
 
-Atuin 在平台主线、迁移主线和 [[Atuin 命令历史管理]] 中有意使用同一套最终基线，不存在等待后续替换的另一份“完整配置”。`search_mode = "fuzzy"` 固定文字匹配方式，`filter_mode = "global"` 固定初始搜索范围，`workspaces = true` 只启用 workspace 范围能力。
+Atuin 在平台主线、迁移主线和 [[Atuin 命令历史管理]] 中有意使用同一套最终基线，不存在等待后续替换的另一份“完整配置”。`search_mode = "fuzzy"` 固定文字匹配方式，`filter_mode = "global"` 固定主机、会话、目录等上下文的初始范围，`search.shells` 固定可进入交互搜索的 Shell 来源，`workspaces = true` 只启用 workspace 范围能力。
 
 ```toml
 # Starship: starship/.config/starship.toml
@@ -837,6 +842,7 @@ type z
 type zi
 starship --version
 atuin doctor
+atuin config get search.shells --verbose
 atuin config get logs.dir --verbose
 fzf --version
 zsh -lic '
@@ -943,6 +949,8 @@ fi
 atuin stats
 unset sanitized_history
 ```
+
+这里的副本来自旧 Zsh，因此必须使用 `import zsh`。导入只向现有 Atuin 数据库增加标记为 Zsh 的记录，不覆盖已有历史；本基线同时包含 Zsh、Bash 和未标记 Shell 的记录，所以这些旧命令仍能从新 Zsh 的 `Ctrl-R` 找到。若实际输入来自 Bash，必须改用 `import bash`，不能把同一文件交给两个解析器。
 
 不要把历史、Atuin 数据库或密钥提交到 Git。原来使用 OMZ `z` 或 `zsh-z` 时，可按真实来源选择一次：
 

@@ -12,7 +12,7 @@ tags:
   - Antidote
   - Ghostty
 created: 2026-07-19T16:30:50
-updated: 2026-09-01T15:50:00
+updated: 2026-09-02T19:05:45
 ---
 
 本文从一台尚未建立现代终端配置的 macOS 出发，完成 Ghostty + Zsh + Antidote + Starship + Atuin + zoxide + fzf 的安装，同时筛选可能存在的旧 Zsh 行为，从零建立、部署并提交一份 dotfiles 仓库。单看本文即可完成主流程。
@@ -533,8 +533,8 @@ inline_height = 20
 # 在搜索界面可按 Ctrl-S 临时循环其他匹配模式。
 search_mode = "fuzzy"
 
-# 打开交互搜索时先检索全部历史；当前还支持 host、session、directory、workspace 和 session-preload。
-# 进入界面后可用 Ctrl-R 循环 search.filters 中启用的过滤范围；本基线不覆盖该列表。
+# 默认不按主机、会话、目录或 workspace 缩小搜索范围；Shell 范围由后面的 [search].shells 决定。
+# 进入界面后可用 Ctrl-R 循环 search.filters 中启用的上下文范围；本基线不覆盖该列表。
 filter_mode = "global"
 
 # 启用 workspace 过滤能力：在 Git 仓库中可检索整个仓库树，而不只当前目录。
@@ -553,6 +553,11 @@ history_filter = [
   # 排除以 curl 开头且包含 Authorization: 请求头的命令。
   "^curl .*Authorization:",
 ]
+
+[search]
+# 同时检索当前 Zsh、可能导入的旧 Bash，以及旧版 Atuin 没有记录 Shell 的历史。
+# 空字符串表示 Shell 未知；显式列出范围，避免默认 auto 在 Zsh 中隐藏 Bash 导入记录。
+shells = ["", "bash", "zsh"]
 
 [logs]
 # Atuin 当前默认写入 ~/.atuin/logs；日志属于可跨进程保留但不应进入 Git 的本机状态。
@@ -940,6 +945,7 @@ printf 'ZDOTDIR=%s\n' "$ZDOTDIR"
 antidote list
 bindkey '^R'
 atuin doctor
+atuin config get search.shells --verbose
 atuin config get logs.dir --verbose
 zoxide --version
 fzf --version
@@ -1057,6 +1063,8 @@ if [ -f "$sanitized_history" ]; then
 fi
 atuin stats
 ```
+
+这里的旧文件是 Zsh 格式，因此必须使用 `import zsh`。记录会加入现有 Atuin 数据库而不会覆盖已经保存的历史；受管基线显式包含 Zsh、Bash 和未标记 Shell 的记录，使同一份 dotfiles 在以后恢复或用于 Bash 到 Zsh 的迁移时仍保持一致的 `Ctrl-R` 搜索范围。
 
 不要把历史、Atuin 数据库或密钥提交到 Git。同步策略见 [[Atuin 命令历史管理]]；Ghostty 已有最小受管基线，Starship 的三配置最终布局只按上面的专题流程建立，zoxide 与 fzf 的个性化则按专题边界处理。
 

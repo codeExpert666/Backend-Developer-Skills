@@ -12,7 +12,7 @@ tags:
   - Atuin
   - 命令历史
 created: 2026-07-19T16:33:48
-updated: 2026-09-01T15:50:00
+updated: 2026-09-02T19:05:45
 ---
 
 Atuin 将命令、执行时间、工作目录、退出状态和耗时保存在本地数据库中，并提供比普通 Shell 历史更容易检索的界面。本方案把它作为 **local-first 的命令历史工具**：不注册账号也能完整使用，跨机器同步是后续按需启用的可选能力。
@@ -39,7 +39,7 @@ Atuin 导入旧历史后，原来的 Zsh 历史文件仍会继续更新。不要
 Atuin 不只是读取配置：当配置目录或 `config.toml` 不存在时，加载设置的命令可能创建目录并写入示例配置。因此，如果该文件准备由 Stow 管理，不能先运行 `atuin info`、`atuin doctor`、`atuin init` 或真实交互式 Zsh。
 
 > [!info] 配置语义核对范围
-> 本节于 2026-09-01 按 [Atuin v18.21.0](https://github.com/atuinsh/atuin/releases/tag/v18.21.0) 和官方 `main` 文档核对了安装目录、同步、匹配方式、过滤范围、workspace、日志目录与有效配置查询。资料核对不表示任何具体机器已经运行或验证这套配置。
+> 本节于 2026-09-02 按 [Atuin v18.21.0](https://github.com/atuinsh/atuin/releases/tag/v18.21.0) 和官方 `main` 文档核对了安装目录、同步、匹配方式、上下文与 Shell 过滤范围、导入写入语义、workspace、日志目录与有效配置查询。资料核对不表示任何具体机器已经运行或验证这套配置。
 
 主线已经完成这一顺序；单独新增 Atuin 软件包时，在仓库中创建或编辑配置源：
 
@@ -71,8 +71,8 @@ inline_height = 20
 # 在搜索界面可按 Ctrl-S 临时循环其他匹配模式。
 search_mode = "fuzzy"
 
-# 默认先搜索全部历史；当前还支持 host、session、directory、workspace 和 session-preload。
-# Ctrl-R 循环的是 search.filters 中启用的过滤范围；本基线不覆盖该列表。
+# 默认不按主机、会话、目录或 workspace 缩小搜索范围；Shell 范围由后面的 [search].shells 决定。
+# Ctrl-R 循环的是 search.filters 中启用的上下文范围；本基线不覆盖该列表。
 filter_mode = "global"
 
 # 启用 workspace 过滤能力；它不会把默认过滤范围从 global 改为 workspace。
@@ -91,12 +91,19 @@ history_filter = [
 # 如需排除整个目录，取消注释并替换成真实的绝对路径。
 # cwd_filter = ["^/absolute/path/to/private-workspace"]
 
+[search]
+# 同时检索当前 Zsh、可能导入的旧 Bash，以及旧版 Atuin 没有记录 Shell 的历史。
+# 空字符串表示 Shell 未知；显式列出范围，避免默认 auto 在 Zsh 中隐藏 Bash 导入记录。
+shells = ["", "bash", "zsh"]
+
 [logs]
 # Atuin 当前默认写入 ~/.atuin/logs；日志属于可跨进程保留但不应进入 Git 的本机状态。
 dir = "~/.local/state/atuin/logs"
 ~~~
 
-`search_mode` 决定输入文字怎样匹配历史，`filter_mode` 决定打开界面时先搜索哪一部分历史；`workspaces = true` 只是让 workspace 成为可用范围。这三项分别控制匹配算法、初始范围和范围能力，不是互相覆盖的同一开关。
+`search_mode` 决定输入文字怎样匹配历史，`filter_mode` 决定是否按主机、会话、目录或 workspace 缩小初始范围，`search.shells` 决定哪些 Shell 的记录可以进入交互搜索；`workspaces = true` 只是让 workspace 成为可用范围。这四项分别控制匹配算法、上下文范围、Shell 来源和范围能力。
+
+Atuin 18.18 及以上默认使用 `search.shells = "auto"`：从 Zsh 打开搜索时，只包含标记为 Zsh 和没有 Shell 标记的记录。本文显式列出空字符串、Bash 与 Zsh，使 Ubuntu 从 Bash 迁移后导入的旧命令仍可通过 Zsh 的 `Ctrl-R` 找到。以后真正使用其他 Shell 时，再把对应名称加入数组；需要混合检索全部 Shell 时才改为 `shells = "all"`。
 
 这里的 local-first 表示历史默认不自动同步，不表示 Atuin 完全离线。若环境明确禁止 Atuin 发起更新检查，再单独设置 `update_check = false`；不要仅因为关闭同步就默认加入它。
 
@@ -216,12 +223,24 @@ atuin stats
 unset legacy_history_file sanitized_history
 ~~~
 
-`atuin import auto` 会根据当前 Shell 和当前历史路径推断输入；切换到新 XDG 历史后，它可能读错文件，因此迁移场景使用显式 `import zsh`。导入不会删除原文件，也不会替你识别全部秘密；这是一次性操作，不能放入 `.zshrc` 或重复执行。
+输入文件的真实格式决定导入器，不能根据当前正在使用的 Shell 猜测：
+
+| 脱敏副本来源 | 导入命令 | 写入的 Shell 标记 |
+| --- | --- | --- |
+| Bash 历史 | `HISTFILE="$sanitized_history" atuin import bash` | `bash` |
+| Zsh 历史 | `HISTFILE="$sanitized_history" atuin import zsh` | `zsh` |
+
+两种导入器都把新记录加入同一个 Atuin 数据库，不会删除或改写其中已有的 Zsh 记录，也不会把 Bash 内容写入 Zsh 原生 `HISTFILE`。命令前的 `HISTFILE=...` 只为这一次 Atuin 进程指定读取文件。若 Bash 历史没有保存时间戳，Atuin 会生成接近导入时刻的时间戳，因此这些旧命令在跨 Shell 搜索中可能显得较新。
+
+`atuin import auto` 会根据当前 Shell 和当前历史路径推断输入；切换到新 XDG 历史后，它可能读错文件，因此迁移场景必须显式选择与文件格式一致的导入器。同一文件不能交给两个导入器；导入不会替你识别全部秘密，而且没有时间戳的历史重复导入后可能形成重复记录，所以不能把它放入 `.zshrc` 或反复执行。
+
+导入完成后，从脱敏副本选择一条无害且容易辨认的命令，在 Zsh 中按 `Ctrl-R` 搜索。也可以用 `atuin search --shell bash --limit 5` 或 `atuin search --shell zsh --limit 5` 分别检查已导入的来源；`atuin stats` 只能说明统计集合发生了变化，不能单独证明 `Ctrl-R` 的 Shell 过滤已经包含该来源。
 
 ## 6. 日常搜索
 
 在新终端按 `Ctrl-R` 打开 Atuin：
 
+- 本基线同时搜索 Bash、Zsh 和没有 Shell 标记的历史，因此从 Bash 迁移后仍能找回旧命令。
 - 输入任意片段，默认按 `search_mode = "fuzzy"` 进行模糊匹配；按 `Ctrl-S` 可临时循环其他匹配方式。
 - 在搜索界面再次按 `Ctrl-R`，可循环 `search.filters` 中启用的全局、主机、会话、目录等过滤范围。
 - 按 `Tab` 将选中的命令带回命令行编辑；本方案还设置了 `enter_accept = false`，避免误执行旧命令。
@@ -281,13 +300,14 @@ atuin --version
 atuin config get auto_sync --verbose
 atuin config get search_mode --verbose
 atuin config get filter_mode --verbose
+atuin config get search.shells --verbose
 atuin config get workspaces --verbose
 atuin config get logs.dir --verbose
 atuin doctor
 bindkey '^R'
 ~~~
 
-`atuin config get ... --verbose` 同时帮助区分配置文件中的值与叠加默认值、环境变量后的有效值。本基线预期上述五项分别解析为 `false`、`fuzzy`、`global`、`true` 和 `~/.local/state/atuin/logs` 对应的有效路径；若文件值与有效值不同，先检查环境变量和实际加载的配置路径。
+`atuin config get ... --verbose` 同时帮助区分配置文件中的值与叠加默认值、环境变量后的有效值。本基线预期 `auto_sync`、`search_mode`、`filter_mode` 和 `workspaces` 分别解析为 `false`、`fuzzy`、`global` 和 `true`，`search.shells` 包含空字符串、`bash` 与 `zsh`，日志目录解析到 `~/.local/state/atuin/logs` 对应的有效路径；若文件值与有效值不同，先检查环境变量和实际加载的配置路径。
 
 再执行一条无副作用的测试命令，按 `Ctrl-R` 搜索其中的唯一文本。若 `Ctrl-R` 打开 fzf 或行为反复变化，说明 fzf 与 Atuin 都绑定了同一按键，回到 [[zoxide 与 fzf 导航和模糊查找]] 只保留一个初始化顺序。
 
@@ -308,6 +328,8 @@ Atuin 默认把数据库、密钥和 session 放在 `~/.local/share/atuin`，除
 - [Atuin：安装](https://docs.atuin.sh/cli/guide/installation/)
 - [Atuin：官方 release](https://github.com/atuinsh/atuin/releases)
 - [Atuin：导入旧历史](https://docs.atuin.sh/cli/guide/import/)
+- [Atuin v18.21.0：导入命令的批量写入流程](https://github.com/atuinsh/atuin/blob/v18.21.0/crates/atuin/src/command/client/import.rs#L138-L184)
+- [Atuin v18.21.0：历史数据库的 `insert or ignore` 写入](https://github.com/atuinsh/atuin/blob/v18.21.0/crates/atuin-client/src/database.rs#L413-L456)
 - [Atuin：Shell 集成与 IDE 排障](https://docs.atuin.sh/cli/guide/shell-integration/)
 - [Atuin：按键配置](https://docs.atuin.sh/main/configuration/key-binding/)
 - [Atuin：配置、过滤与数据路径](https://docs.atuin.sh/main/configuration/config/)
